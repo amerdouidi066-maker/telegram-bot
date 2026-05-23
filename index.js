@@ -9,7 +9,7 @@ const ADMIN_ID = parseInt(process.env.ADMIN_ID || "7693096273", 10);
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN is required");
 if (!MONGODB_URI) throw new Error("MONGODB_URI is required");
 
-// ─── Models ───────────────────────────────────────────────────────────────────
+// ─── Mongoose Models ───────────────────────────────────────────────────────────────────
 
 const userSchema = new mongoose.Schema({
   telegramId: { type: Number, required: true, unique: true },
