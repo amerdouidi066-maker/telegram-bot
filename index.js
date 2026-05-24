@@ -148,7 +148,6 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 // /start
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const user = await getOrCreateUser(msg);
-  const available = await Account.countDocuments({ assigned: false });
 
   bot.sendMessage(msg.chat.id,
     `👋 *أهلاً ${user.firstName}!*\n\n` +
@@ -158,7 +157,6 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     `2️⃣ ستحصل على بيانات جاهزة\n` +
     `3️⃣ سجّل الحساب باستخدام البيانات\n` +
     `4️⃣ اضغط "تم" واحصل على $0.17\n\n` +
-    `📦 الحسابات المتاحة: *${available}*\n` +
     `💵 السعر لكل حساب: *$0.145 - $0.17*`,
     { parse_mode: "Markdown", ...MAIN_MENU }
   );
@@ -605,6 +603,31 @@ bot.onText(/\/withdrawals/, async (msg) => {
     text += `👤 ${u?.firstName} (\`${w.userId}\`)\n💵 $${fmt(w.amount)}\n📮 \`${w.address}\`\n\n`;
   }
   bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+});
+
+// /export — تصدير الحسابات المقبولة جاهزة للبيع
+bot.onText(/\/export/, async (msg) => {
+  if (msg.from.id !== ADMIN_ID) return;
+  const tasks = await Task.find({ status: "approved" }).sort({ createdAt: -1 }).limit(50);
+  if (!tasks.length) { bot.sendMessage(msg.chat.id, "❌ لا توجد حسابات مقبولة بعد."); return; }
+
+  let text = `📦 *الحسابات الجاهزة للبيع (${tasks.length})*\n\n`;
+  for (const t of tasks) {
+    const account = await Account.findById(t.accountId);
+    if (account) {
+      text += `📧 \`${account.email}\`\n🔑 \`${account.password}\`\n👤 ${account.firstName} ${account.lastName}\n\n`;
+    }
+  }
+
+  // لو الرسالة كبيرة قسّمها
+  if (text.length > 4000) {
+    const chunks = text.match(/.{1,4000}/gs);
+    for (const chunk of chunks) {
+      await bot.sendMessage(msg.chat.id, chunk, { parse_mode: "Markdown" });
+    }
+  } else {
+    bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  }
 });
 
 // ─── Auto Cancel After 20 Minutes ────────────────────────────────────────────
