@@ -30,7 +30,6 @@ const accountSchema = new mongoose.Schema({
   lastName: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  birthdate: { type: String, default: null },
   assigned: { type: Boolean, default: false },
   assignedTo: { type: Number, default: null },
   assignedAt: { type: Date, default: null },
@@ -41,8 +40,7 @@ const taskSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   accountEmail: { type: String, required: true },
   accountId: { type: mongoose.Schema.Types.ObjectId, ref: "Account" },
-  status: { type: String, enum: ["pending", "verifying", "approved", "rejected"], default: "pending" },
-  verifyAt: { type: Date, default: null },
+  status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
 }, { timestamps: true });
 
 const withdrawSchema = new mongoose.Schema({
@@ -56,52 +54,6 @@ const User = mongoose.model("User", userSchema);
 const Account = mongoose.model("Account", accountSchema);
 const Task = mongoose.model("Task", taskSchema);
 const Withdrawal = mongoose.model("Withdrawal", withdrawSchema);
-
-// ─── Auto Generate Account Data ───────────────────────────────────────────────
-
-const firstNames = ["James","John","Robert","Michael","William","David","Richard","Joseph","Thomas","Charles","Emma","Olivia","Ava","Isabella","Sophia","Mia","Charlotte","Amelia","Harper","Evelyn","Liam","Noah","Oliver","Elijah","Benjamin","Lucas","Mason","Ethan","Aiden","Logan"];
-const lastNames = ["Smith","Johnson","Williams","Brown","Jones","Garcia","Miller","Davis","Wilson","Taylor","Anderson","Thomas","Jackson","White","Harris","Martin","Thompson","Young","Robinson","Lewis","Walker","Hall","Allen","King","Wright","Scott","Green","Baker","Adams","Nelson"];
-
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function generatePassword() {
-  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  let pass = "";
-  for (let i = 0; i < 12; i++) pass += chars[randomInt(0, chars.length - 1)];
-  return pass;
-}
-
-function generateBirthdate() {
-  const day = String(randomInt(1, 28)).padStart(2, "0");
-  const month = String(randomInt(1, 12)).padStart(2, "0");
-  const year = randomInt(1985, 2000);
-  return `${day}.${month}.${year}`;
-}
-
-function generateAccountData() {
-  const first = firstNames[randomInt(0, firstNames.length - 1)];
-  const last = lastNames[randomInt(0, lastNames.length - 1)];
-  const birthdate = generateBirthdate();
-  const password = generatePassword();
-  const num = String(randomInt(1, 99)).padStart(2, "0");
-
-  // أنماط احترافية مختلفة
-  const patterns = [
-    `${first.toLowerCase()}.${last.toLowerCase()}${num}`,
-    `${first.toLowerCase()}_${last.toLowerCase()}${num}`,
-    `${first.toLowerCase()}${last.toLowerCase()}${num}`,
-    `${first[0].toLowerCase()}.${last.toLowerCase()}${num}`,
-    `${first.toLowerCase()}${num}.${last.toLowerCase()}`,
-    `${first.toLowerCase()}.${num}${last.toLowerCase()}`,
-  ];
-
-  const pattern = patterns[randomInt(0, patterns.length - 1)];
-  const email = `${pattern}@gmail.com`;
-
-  return { firstName: first, lastName: last, email, password, birthdate };
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -162,6 +114,8 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const user = await getOrCreateUser(msg);
 
+  const available = await Account.countDocuments({ assigned: false });
+
   bot.sendMessage(msg.chat.id,
     `👋 *أهلاً ${user.firstName}!*\n\n` +
     `💰 *اكسب من إنشاء حسابات Gmail!*\n\n` +
@@ -170,6 +124,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     `2️⃣ ستحصل على بيانات جاهزة\n` +
     `3️⃣ سجّل الحساب باستخدام البيانات\n` +
     `4️⃣ اضغط "تم" واحصل على $0.17\n\n` +
+    `📦 الحسابات المتاحة: *${available}*\n` +
     `💵 السعر لكل حساب: *$0.145 - $0.17*`,
     { parse_mode: "Markdown", ...MAIN_MENU }
   );
@@ -192,7 +147,9 @@ bot.on("message", async (msg) => {
     const pending = await Task.findOne({ userId: user.telegramId, status: "pending" });
     if (pending) {
       bot.sendMessage(chatId,
-        `⏳ *لديك حساب قيد المراجعة*\n\n📧 الإيميل: \`${pending.accountEmail}\`\n\nانتظر حتى تتم مراجعته أولاً.`,
+        `⏳ *لديك حساب قيد المراجعة*\n\n` +
+        `📧 الإيميل: \`${pending.accountEmail}\`\n\n` +
+        `انتظر حتى تتم مراجعته أولاً.`,
         { parse_mode: "Markdown" }
       );
       return;
@@ -219,9 +176,8 @@ bot.on("message", async (msg) => {
     bot.sendMessage(chatId,
       `📧 *قم بتسجيل حساب Gmail باستخدام البيانات المحددة، واحصل على $0.145 إلى $0.17*\n\n` +
       `━━━━━━━━━━━━━━━━━━\n` +
-      `👤 الاسم: \`${account.firstName}\`\n` +
-      `👤 اللقب: \`${account.lastName}\`\n` +
-      `🎂 تاريخ الميلاد: \`${account.birthdate || "01.01.1990"}\`\n` +
+      `👤 الاسم: *${account.firstName}*\n` +
+      `👤 اللقب: *${account.lastName}*\n` +
       `📧 البريد الإلكتروني: \`${account.email}\`\n` +
       `🔑 كلمة المرور: \`${account.password}\`\n` +
       `📩 إيميل الاستعادة: \`${RECOVERY_EMAIL}\`\n` +
@@ -240,9 +196,8 @@ bot.on("message", async (msg) => {
     }
     let txt = `📋 *حساباتك*\n\n`;
     for (const t of tasks) {
-      const statusEmoji = t.status === "approved" ? "✅" : t.status === "rejected" ? "❌" : t.status === "verifying" ? "🔍" : "⏳";
-      const statusText = t.status === "verifying" ? "قيد التحقق" : "";
-      txt += `${statusEmoji} \`${t.accountEmail}\` — $${fmt(t.amount)} ${statusText}\n`;
+      const statusEmoji = t.status === "approved" ? "✅" : t.status === "rejected" ? "❌" : "⏳";
+      txt += `${statusEmoji} \`${t.accountEmail}\` — $${fmt(t.amount)}\n`;
     }
     bot.sendMessage(chatId, txt, { parse_mode: "Markdown", ...MAIN_MENU });
     return;
@@ -294,7 +249,8 @@ bot.on("message", async (msg) => {
       `2. اضغط "إنشاء حساب"\n` +
       `3. أدخل البيانات المعطاة بالضبط\n` +
       `4. أضف إيميل الاستعادة: \`${RECOVERY_EMAIL}\`\n` +
-      `5. ارجع للبوت واضغط "تم"\n\n` +
+      `5. أكمل التحقق برقم الهاتف\n` +
+      `6. ارجع للبوت واضغط "تم"\n\n` +
       `⚠️ *تنبيهات:*\n` +
       `• استخدم البيانات المحددة فقط\n` +
       `• أضف إيميل الاستعادة المحدد\n` +
@@ -334,11 +290,17 @@ bot.on("message", async (msg) => {
     await user.save();
     await Withdrawal.create({ userId: user.telegramId, amount, address });
     bot.sendMessage(chatId,
-      `✅ *تم إرسال طلب السحب!*\n\n💵 المبلغ: *$${fmt(amount)} USDT*\n📮 العنوان: \`${address}\`\n\n⏳ سيتم المعالجة خلال 24 ساعة.`,
+      `✅ *تم إرسال طلب السحب!*\n\n` +
+      `💵 المبلغ: *$${fmt(amount)} USDT*\n` +
+      `📮 العنوان: \`${address}\`\n\n` +
+      `⏳ سيتم المعالجة خلال 24 ساعة.`,
       { parse_mode: "Markdown", ...MAIN_MENU }
     );
     bot.sendMessage(ADMIN_ID,
-      `💸 *طلب سحب جديد*\n\n👤 ${user.firstName} (\`${user.telegramId}\`)\n💵 $${fmt(amount)} USDT\n📮 \`${address}\``,
+      `💸 *طلب سحب جديد*\n\n` +
+      `👤 ${user.firstName} (\`${user.telegramId}\`)\n` +
+      `💵 $${fmt(amount)} USDT\n` +
+      `📮 \`${address}\``,
       { parse_mode: "Markdown" }
     ).catch(() => {});
     return;
@@ -357,28 +319,43 @@ bot.on("callback_query", async (query) => {
       bot.sendMessage(chatId, "❌ لا يوجد حساب نشط.");
       return;
     }
+
     const accountId = user.stateMeta?.accountId;
     const account = await Account.findById(accountId);
+
     if (!account) {
       bot.sendMessage(chatId, "❌ حدث خطأ. حاول مرة أخرى.");
       return;
     }
+
     const task = await Task.create({
       userId: user.telegramId,
       amount: 0.17,
       accountEmail: account.email,
       accountId: account._id,
     });
+
     user.state = null; user.stateMeta = null;
     await user.save();
+
     bot.sendMessage(chatId,
-      `✅ *تم إرسال طلبك!*\n\n📧 الإيميل: \`${account.email}\`\n💵 المبلغ: *$0.17 USDT*\n\n⏳ سيتم المراجعة خلال 24 ساعة.`,
+      `✅ *تم إرسال طلبك!*\n\n` +
+      `📧 الإيميل: \`${account.email}\`\n` +
+      `💵 المبلغ: *$0.17 USDT*\n\n` +
+      `⏳ سيتم المراجعة خلال 24 ساعة.`,
       { parse_mode: "Markdown", ...MAIN_MENU }
     );
+
     const tasks = await Task.find({ userId: user.telegramId });
     const taskIndex = tasks.length - 1;
     bot.sendMessage(ADMIN_ID,
-      `📬 *طلب Gmail جديد*\n\n👤 ${user.firstName} (\`${user.telegramId}\`)\n📧 الإيميل: \`${account.email}\`\n🔑 كلمة المرور: \`${account.password}\`\n👤 الاسم: ${account.firstName} ${account.lastName}\n\n✅ /approve ${user.telegramId} ${taskIndex}\n❌ /reject ${user.telegramId} ${taskIndex}`,
+      `📬 *طلب Gmail جديد*\n\n` +
+      `👤 ${user.firstName} (\`${user.telegramId}\`)\n` +
+      `📧 الإيميل: \`${account.email}\`\n` +
+      `🔑 كلمة المرور: \`${account.password}\`\n` +
+      `👤 الاسم: ${account.firstName} ${account.lastName}\n\n` +
+      `✅ /approve ${user.telegramId} ${taskIndex}\n` +
+      `❌ /reject ${user.telegramId} ${taskIndex}`,
       { parse_mode: "Markdown" }
     ).catch(() => {});
     return;
@@ -387,7 +364,9 @@ bot.on("callback_query", async (query) => {
   if (data === "task_cancel") {
     const accountId = user.stateMeta?.accountId;
     if (accountId) {
-      await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null, assignedAt: null });
+      await Account.findByIdAndUpdate(accountId, {
+        assigned: false, assignedTo: null, assignedAt: null
+      });
     }
     user.state = null; user.stateMeta = null;
     await user.save();
@@ -403,7 +382,8 @@ bot.on("callback_query", async (query) => {
       `3. أدخل الاسم واللقب المحددين\n` +
       `4. أدخل الإيميل وكلمة المرور المحددين\n` +
       `5. أضف إيميل الاستعادة: \`${RECOVERY_EMAIL}\`\n` +
-      `6. ارجع واضغط ✅ تم`,
+      `6. أكمل التحقق برقم هاتف\n` +
+      `7. ارجع واضغط ✅ تم`,
       { parse_mode: "Markdown" }
     );
     return;
@@ -414,45 +394,23 @@ bot.on("callback_query", async (query) => {
 bot.onText(/\/withdraw/, async (msg) => {
   const user = await getOrCreateUser(msg);
   if (user.balance < 0.20) {
-    bot.sendMessage(msg.chat.id, `❌ رصيدك *$${fmt(user.balance)}* أقل من الحد الأدنى $0.20`, { parse_mode: "Markdown" });
+    bot.sendMessage(msg.chat.id,
+      `❌ رصيدك *$${fmt(user.balance)}* أقل من الحد الأدنى $0.20`,
+      { parse_mode: "Markdown" }
+    );
     return;
   }
   user.state = "awaiting_withdraw_amount";
   user.stateMeta = null;
   await user.save();
-  bot.sendMessage(msg.chat.id, `💸 *طلب سحب*\n\nرصيدك: *$${fmt(user.balance)} USDT*\nأدخل المبلغ:`, { parse_mode: "Markdown" });
-});
-
-// ─── Admin Commands ───────────────────────────────────────────────────────────
-
-// /generate N — يولّد N حساب تلقائياً
-bot.onText(/\/generate (\d+)/, async (msg, match) => {
-  if (msg.from.id !== ADMIN_ID) return;
-  const count = Math.min(parseInt(match[1]), 100);
-  let added = 0;
-  let attempts = 0;
-  const maxAttempts = count * 5;
-
-  while (added < count && attempts < maxAttempts) {
-    attempts++;
-    const data = generateAccountData();
-    try {
-      await Account.create(data);
-      added++;
-    } catch {
-      // إيميل مكرر — جرب مرة أخرى
-    }
-  }
-
-  const total = await Account.countDocuments({ assigned: false });
   bot.sendMessage(msg.chat.id,
-    `✅ *تم توليد الحسابات*\n\n` +
-    `➕ تمت الإضافة: *${added}*`,
+    `💸 *طلب سحب*\n\nرصيدك: *$${fmt(user.balance)} USDT*\nأدخل المبلغ:`,
     { parse_mode: "Markdown" }
   );
 });
 
-// /addaccount
+// ─── Admin Commands ───────────────────────────────────────────────────────────
+
 bot.onText(/\/addaccount (\S+) (\S+) (\S+) (\S+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   const [, firstName, lastName, email, password] = match;
@@ -460,7 +418,11 @@ bot.onText(/\/addaccount (\S+) (\S+) (\S+) (\S+)/, async (msg, match) => {
     await Account.create({ firstName, lastName, email, password });
     const total = await Account.countDocuments({ assigned: false });
     bot.sendMessage(msg.chat.id,
-      `✅ *تم إضافة الحساب*\n\n👤 ${firstName} ${lastName}\n📧 \`${email}\`\n🔑 \`${password}\`\n\n📦 الحسابات المتاحة: *${total}*`,
+      `✅ *تم إضافة الحساب*\n\n` +
+      `👤 ${firstName} ${lastName}\n` +
+      `📧 \`${email}\`\n` +
+      `🔑 \`${password}\`\n\n` +
+      `📦 الحسابات المتاحة: *${total}*`,
       { parse_mode: "Markdown" }
     );
   } catch {
@@ -468,7 +430,6 @@ bot.onText(/\/addaccount (\S+) (\S+) (\S+) (\S+)/, async (msg, match) => {
   }
 });
 
-// /approve
 bot.onText(/\/approve (\d+) (\d+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   const userId = parseInt(match[1]);
@@ -477,27 +438,23 @@ bot.onText(/\/approve (\d+) (\d+)/, async (msg, match) => {
   const task = tasks[taskIndex];
   if (!task) { bot.sendMessage(msg.chat.id, "❌ المهمة غير موجودة."); return; }
   if (task.status !== "pending") { bot.sendMessage(msg.chat.id, `⚠️ تمت معالجتها (${task.status}).`); return; }
-
-  // ابدأ فترة التحقق 72 ساعة
-  task.status = "verifying";
-  task.verifyAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
+  task.status = "approved";
   await task.save();
-
-  // أخبر المستخدم
   const user = await User.findOne({ telegramId: userId });
   if (user) {
+    user.balance += task.amount;
+    await user.save();
     bot.sendMessage(userId,
-      `🔍 *حسابك قيد التحقق*\n\n` +
-      `📧 \`${task.accountEmail}\`\n\n` +
-      `⏳ سيتم التحقق خلال *72 ساعة*\n` +
-      `💵 بعدها سيُضاف *$${task.amount} USDT* لرصيدك تلقائياً`,
+      `✅ *تمت الموافقة على حسابك!*\n\n` +
+      `📧 \`${task.accountEmail}\`\n` +
+      `💵 تم إضافة *$${task.amount} USDT*!\n` +
+      `💰 رصيدك: *$${fmt(user.balance)} USDT*`,
       { parse_mode: "Markdown", ...MAIN_MENU }
     ).catch(() => {});
   }
-  bot.sendMessage(msg.chat.id, `🔍 تم قبول الحساب — سيُدفع للمستخدم بعد 72 ساعة.`);
+  bot.sendMessage(msg.chat.id, `✅ تمت الموافقة وإضافة $${task.amount} للمستخدم.`);
 });
 
-// /reject
 bot.onText(/\/reject (\d+) (\d+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   const userId = parseInt(match[1]);
@@ -509,19 +466,22 @@ bot.onText(/\/reject (\d+) (\d+)/, async (msg, match) => {
   task.status = "rejected";
   await task.save();
   if (task.accountId) {
-    await Account.findByIdAndUpdate(task.accountId, { assigned: false, assignedTo: null, assignedAt: null });
+    await Account.findByIdAndUpdate(task.accountId, {
+      assigned: false, assignedTo: null, assignedAt: null
+    });
   }
   const user = await User.findOne({ telegramId: userId });
   if (user) {
     bot.sendMessage(userId,
-      `❌ *تم رفض الحساب*\n\n📧 \`${task.accountEmail}\`\n\nتأكد من استخدام البيانات المحددة وإعادة المحاولة.`,
+      `❌ *تم رفض الحساب*\n\n` +
+      `📧 \`${task.accountEmail}\`\n\n` +
+      `تأكد من استخدام البيانات المحددة وإعادة المحاولة.`,
       { parse_mode: "Markdown", ...MAIN_MENU }
     ).catch(() => {});
   }
   bot.sendMessage(msg.chat.id, `❌ تم الرفض وإعادة الحساب للمتاح.`);
 });
 
-// /pending
 bot.onText(/\/pending/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
   const tasks = await Task.find({ status: "pending" }).sort({ createdAt: 1 }).limit(20);
@@ -532,12 +492,15 @@ bot.onText(/\/pending/, async (msg) => {
     const account = await Account.findById(t.accountId);
     const userTasks = await Task.find({ userId: t.userId }).sort({ createdAt: 1 });
     const index = userTasks.findIndex(x => x._id.equals(t._id));
-    text += `📧 \`${t.accountEmail}\`\n🔑 \`${account?.password || "غير متاح"}\`\n👤 ${account?.firstName} ${account?.lastName}\n👤 ${user?.firstName} (\`${t.userId}\`)\n✅ /approve ${t.userId} ${index}  ❌ /reject ${t.userId} ${index}\n\n`;
+    text += `📧 \`${t.accountEmail}\`\n` +
+            `🔑 \`${account?.password || "غير متاح"}\`\n` +
+            `👤 ${account?.firstName} ${account?.lastName}\n` +
+            `👤 ${user?.firstName} (\`${t.userId}\`)\n` +
+            `✅ /approve ${t.userId} ${index}  ❌ /reject ${t.userId} ${index}\n\n`;
   }
   bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
 });
 
-// /accounts
 bot.onText(/\/accounts/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
   const available = await Account.countDocuments({ assigned: false });
@@ -548,7 +511,6 @@ bot.onText(/\/accounts/, async (msg) => {
   );
 });
 
-// /addbalance
 bot.onText(/\/addbalance (\d+) ([\d.]+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   const user = await User.findOne({ telegramId: parseInt(match[1]) });
@@ -559,7 +521,6 @@ bot.onText(/\/addbalance (\d+) ([\d.]+)/, async (msg, match) => {
   bot.sendMessage(user.telegramId, `🎁 تم إضافة $${match[2]} لرصيدك!\nرصيدك: $${fmt(user.balance)}`, MAIN_MENU).catch(() => {});
 });
 
-// /ban /unban
 bot.onText(/\/ban (\d+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   const user = await User.findOne({ telegramId: parseInt(match[1]) });
@@ -578,7 +539,6 @@ bot.onText(/\/unban (\d+)/, async (msg, match) => {
   bot.sendMessage(user.telegramId, "✅ تم رفع الحظر!", MAIN_MENU).catch(() => {});
 });
 
-// /users
 bot.onText(/\/users/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
   const users = await User.find().sort({ createdAt: -1 }).limit(20);
@@ -589,7 +549,6 @@ bot.onText(/\/users/, async (msg) => {
   bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
 });
 
-// /stats
 bot.onText(/\/stats/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
   const totalUsers = await User.countDocuments();
@@ -598,12 +557,16 @@ bot.onText(/\/stats/, async (msg) => {
   const availableAccounts = await Account.countDocuments({ assigned: false });
   const paid = await Task.aggregate([{ $match: { status: "approved" } }, { $group: { _id: null, total: { $sum: "$amount" } } }]);
   bot.sendMessage(msg.chat.id,
-    `📊 *الإحصائيات*\n\n👤 المستخدمون: *${totalUsers}*\n📦 الحسابات المتاحة: *${availableAccounts}*\n✅ طلبات مقبولة: *${approvedTasks}*\n⏳ قيد المراجعة: *${pendingTasks}*\n💵 إجمالي المدفوع: *$${fmt(paid[0]?.total || 0)} USDT*`,
+    `📊 *الإحصائيات*\n\n` +
+    `👤 المستخدمون: *${totalUsers}*\n` +
+    `📦 الحسابات المتاحة: *${availableAccounts}*\n` +
+    `✅ طلبات مقبولة: *${approvedTasks}*\n` +
+    `⏳ قيد المراجعة: *${pendingTasks}*\n` +
+    `💵 إجمالي المدفوع: *$${fmt(paid[0]?.total || 0)} USDT*`,
     { parse_mode: "Markdown" }
   );
 });
 
-// /broadcast
 bot.onText(/\/broadcast (.+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   const users = await User.find({}, "telegramId");
@@ -615,7 +578,6 @@ bot.onText(/\/broadcast (.+)/, async (msg, match) => {
   bot.sendMessage(msg.chat.id, `📢 ✅ ${sent} نجح | ❌ ${failed} فشل`);
 });
 
-// /withdrawals
 bot.onText(/\/withdrawals/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
   const wds = await Withdrawal.find({ status: "pending" }).limit(20);
@@ -627,108 +589,6 @@ bot.onText(/\/withdrawals/, async (msg) => {
   }
   bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
 });
-
-// /export — تصدير الحسابات المقبولة جاهزة للبيع
-bot.onText(/\/export/, async (msg) => {
-  if (msg.from.id !== ADMIN_ID) return;
-  const tasks = await Task.find({ status: "approved" }).sort({ createdAt: -1 }).limit(50);
-  if (!tasks.length) { bot.sendMessage(msg.chat.id, "❌ لا توجد حسابات مقبولة بعد."); return; }
-
-  let text = `📦 *الحسابات الجاهزة للبيع (${tasks.length})*\n\n`;
-  for (const t of tasks) {
-    const account = await Account.findById(t.accountId);
-    if (account) {
-      text += `📧 \`${account.email}\`\n🔑 \`${account.password}\`\n👤 ${account.firstName} ${account.lastName}\n\n`;
-    }
-  }
-
-  // لو الرسالة كبيرة قسّمها
-  if (text.length > 4000) {
-    const chunks = text.match(/.{1,4000}/gs);
-    for (const chunk of chunks) {
-      await bot.sendMessage(msg.chat.id, chunk, { parse_mode: "Markdown" });
-    }
-  } else {
-    bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
-  }
-});
-
-// ─── Auto Pay After 72 Hours Verification ────────────────────────────────────
-
-async function processVerifiedTasks() {
-  const now = new Date();
-  const tasks = await Task.find({ status: "verifying", verifyAt: { $lt: now } });
-
-  for (const task of tasks) {
-    task.status = "approved";
-    await task.save();
-
-    const user = await User.findOne({ telegramId: task.userId });
-    if (user) {
-      user.balance += task.amount;
-      await user.save();
-      bot.sendMessage(user.telegramId,
-        `✅ *تم التحقق من حسابك!*\n\n` +
-        `📧 \`${task.accountEmail}\`\n` +
-        `💵 تم إضافة *$${task.amount} USDT* لرصيدك!\n` +
-        `💰 رصيدك الآن: *$${fmt(user.balance)} USDT*`,
-        { parse_mode: "Markdown", ...MAIN_MENU }
-      ).catch(() => {});
-    }
-  }
-
-  if (tasks.length > 0) {
-    console.log(`✅ تم دفع ${tasks.length} مهمة بعد التحقق`);
-  }
-}
-
-// فحص كل 10 دقائق
-setInterval(processVerifiedTasks, 10 * 60 * 1000);
-
-// ─── Auto Cancel After 20 Minutes ────────────────────────────────────────────
-
-async function cancelExpiredAssignments() {
-  const expireTime = new Date(Date.now() - 20 * 60 * 1000); // 20 دقيقة
-  const expiredAccounts = await Account.find({
-    assigned: true,
-    assignedAt: { $lt: expireTime },
-  });
-
-  for (const account of expiredAccounts) {
-    const user = await User.findOne({ telegramId: account.assignedTo });
-
-    // تحقق إن المستخدم لا يزال في حالة انتظار تأكيد هذا الحساب
-    if (user && user.state === "awaiting_confirmation" &&
-        user.stateMeta?.accountId === account._id.toString()) {
-      user.state = null;
-      user.stateMeta = null;
-      await user.save();
-
-      // أرسل إشعار للمستخدم
-      bot.sendMessage(user.telegramId,
-        `⏰ *انتهت مهلة التسجيل!*\n\n` +
-        `لم تؤكد إنشاء الحساب خلال 20 دقيقة.\n` +
-        `تم إلغاء الطلب تلقائياً.\n\n` +
-        `اضغط "أنشئ حساب Gmail جديد" للمحاولة مجدداً.`,
-        { parse_mode: "Markdown", ...MAIN_MENU }
-      ).catch(() => {});
-    }
-
-    // أعد الحساب للمتاح
-    await Account.findByIdAndUpdate(account._id, {
-      assigned: false,
-      assignedTo: null,
-      assignedAt: null,
-    });
-  }
-
-  if (expiredAccounts.length > 0) {
-    console.log(`🔄 تم إلغاء ${expiredAccounts.length} حساب منتهي الصلاحية`);
-  }
-}
-
-// شغّل الفحص كل دقيقة
-setInterval(cancelExpiredAssignments, 60 * 1000);
 
 // ─── Connect ──────────────────────────────────────────────────────────────────
 
