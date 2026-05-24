@@ -157,7 +157,16 @@ function confirmKeyboard() {
 
 // ─── Bot ──────────────────────────────────────────────────────────────────────
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(BOT_TOKEN, {
+  polling: {
+    interval: 1000,
+    autoStart: true,
+    params: {
+      timeout: 10,
+      allowed_updates: ["message", "callback_query"],
+    },
+  },
+});
 
 // ✅ منع التكرار الناتج عن تشغيل أكثر من instance
 bot.on("polling_error", (err) => {
