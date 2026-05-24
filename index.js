@@ -11,6 +11,7 @@ if (!MONGODB_URI) throw new Error("MONGODB_URI is required");
 
 // ─── Mongoose Models ───────────────────────────────────────────────────────────────────
 
+
 const userSchema = new mongoose.Schema({
   telegramId: { type: Number, required: true, unique: true },
   username: String,
