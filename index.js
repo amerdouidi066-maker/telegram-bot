@@ -527,6 +527,7 @@ bot.onText(/\/pending/, async (msg) => {
 // /accounts
 bot.onText(/\/accounts/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
+  const available = await Account.countDocuments({ assigned: false });
   const assigned = await Account.countDocuments({ assigned: true });
   bot.sendMessage(msg.chat.id,
     `📦 *الحسابات*\n\n✅ متاح: *${available}*\n🔒 مُعيَّن: *${assigned}*\n📊 الإجمالي: *${available + assigned}*`,
