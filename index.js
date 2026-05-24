@@ -378,13 +378,9 @@ bot.on("callback_query", async (query) => {
     await user.save();
     // عدّل الرسالة الأصلية عشان تختفي البيانات
     bot.editMessageText(
-      `✅ *تم إرسال طلبك بنجاح!*\n\n⏳ سيتم المراجعة خلال 24 ساعة.`,
+      `✅ *تم إرسال طلبك بنجاح!*\n\n💵 المبلغ: *$0.17 USDT*\n\n⏳ سيتم المراجعة خلال 24 ساعة.`,
       { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
     ).catch(() => {});
-    bot.sendMessage(chatId,
-      `✅ *تم إرسال طلبك!*\n\n💵 المبلغ: *$0.17 USDT*\n\n⏳ سيتم المراجعة خلال 24 ساعة.`,
-      { parse_mode: "Markdown", ...MAIN_MENU }
-    );
     const tasks = await Task.find({ userId: user.telegramId });
     const taskIndex = tasks.length - 1;
     bot.sendMessage(ADMIN_ID,
@@ -401,12 +397,11 @@ bot.on("callback_query", async (query) => {
     }
     user.state = null; user.stateMeta = null;
     await user.save();
-    // عدّل الرسالة الأصلية عشان تختفي البيانات
+    // عدّل الرسالة الأصلية فقط بدون رسالة ثانية
     bot.editMessageText(
       `🚫 *تم إلغاء التسجيل*`,
       { chat_id: chatId, message_id: query.message.message_id, parse_mode: "Markdown" }
     ).catch(() => {});
-    bot.sendMessage(chatId, "🚫 تم إلغاء التسجيل.", MAIN_MENU);
     return;
   }
 
@@ -550,6 +545,17 @@ bot.onText(/\/pending/, async (msg) => {
     text += `📧 \`${t.accountEmail}\`\n🔑 \`${account?.password || "غير متاح"}\`\n👤 ${account?.firstName} ${account?.lastName}\n👤 ${user?.firstName} (\`${t.userId}\`)\n✅ /approve ${t.userId} ${index}  ❌ /reject ${t.userId} ${index}\n\n`;
   }
   bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+});
+
+// /clearaccounts — حذف كل الحسابات المتاحة
+bot.onText(/\/clearaccounts/, async (msg) => {
+  if (msg.from.id !== ADMIN_ID) return;
+  const count = await Account.countDocuments();
+  await Account.deleteMany({});
+  bot.sendMessage(msg.chat.id,
+    `🗑️ *تم حذف كل الحسابات*\n\n📦 تم حذف: *${count}* حساب\n\nاستخدم /generate لإضافة حسابات جديدة.`,
+    { parse_mode: "Markdown" }
+  );
 });
 
 // /accounts
