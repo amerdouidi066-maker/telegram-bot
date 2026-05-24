@@ -41,7 +41,8 @@ const taskSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   accountEmail: { type: String, required: true },
   accountId: { type: mongoose.Schema.Types.ObjectId, ref: "Account" },
-  status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+  status: { type: String, enum: ["pending", "verifying", "approved", "rejected"], default: "pending" },
+  verifyAt: { type: Date, default: null },
 }, { timestamps: true });
 
 const withdrawSchema = new mongoose.Schema({
@@ -227,8 +228,9 @@ bot.on("message", async (msg) => {
     }
     let txt = `📋 *حساباتك*\n\n`;
     for (const t of tasks) {
-      const statusEmoji = t.status === "approved" ? "✅" : t.status === "rejected" ? "❌" : "⏳";
-      txt += `${statusEmoji} \`${t.accountEmail}\` — $${fmt(t.amount)}\n`;
+      const statusEmoji = t.status === "approved" ? "✅" : t.status === "rejected" ? "❌" : t.status === "verifying" ? "🔍" : "⏳";
+      const statusText = t.status === "verifying" ? "قيد التحقق" : "";
+      txt += `${statusEmoji} \`${t.accountEmail}\` — $${fmt(t.amount)} ${statusText}\n`;
     }
     bot.sendMessage(chatId, txt, { parse_mode: "Markdown", ...MAIN_MENU });
     return;
@@ -460,18 +462,24 @@ bot.onText(/\/approve (\d+) (\d+)/, async (msg, match) => {
   const task = tasks[taskIndex];
   if (!task) { bot.sendMessage(msg.chat.id, "❌ المهمة غير موجودة."); return; }
   if (task.status !== "pending") { bot.sendMessage(msg.chat.id, `⚠️ تمت معالجتها (${task.status}).`); return; }
-  task.status = "approved";
+
+  // ابدأ فترة التحقق 72 ساعة
+  task.status = "verifying";
+  task.verifyAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
   await task.save();
+
+  // أخبر المستخدم
   const user = await User.findOne({ telegramId: userId });
   if (user) {
-    user.balance += task.amount;
-    await user.save();
     bot.sendMessage(userId,
-      `✅ *تمت الموافقة على حسابك!*\n\n📧 \`${task.accountEmail}\`\n💵 تم إضافة *$${task.amount} USDT*!\n💰 رصيدك: *$${fmt(user.balance)} USDT*`,
+      `🔍 *حسابك قيد التحقق*\n\n` +
+      `📧 \`${task.accountEmail}\`\n\n` +
+      `⏳ سيتم التحقق خلال *72 ساعة*\n` +
+      `💵 بعدها سيُضاف *$${task.amount} USDT* لرصيدك تلقائياً`,
       { parse_mode: "Markdown", ...MAIN_MENU }
     ).catch(() => {});
   }
-  bot.sendMessage(msg.chat.id, `✅ تمت الموافقة وإضافة $${task.amount} للمستخدم.`);
+  bot.sendMessage(msg.chat.id, `🔍 تم قبول الحساب — سيُدفع للمستخدم بعد 72 ساعة.`);
 });
 
 // /reject
@@ -629,6 +637,38 @@ bot.onText(/\/export/, async (msg) => {
     bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
   }
 });
+
+// ─── Auto Pay After 72 Hours Verification ────────────────────────────────────
+
+async function processVerifiedTasks() {
+  const now = new Date();
+  const tasks = await Task.find({ status: "verifying", verifyAt: { $lt: now } });
+
+  for (const task of tasks) {
+    task.status = "approved";
+    await task.save();
+
+    const user = await User.findOne({ telegramId: task.userId });
+    if (user) {
+      user.balance += task.amount;
+      await user.save();
+      bot.sendMessage(user.telegramId,
+        `✅ *تم التحقق من حسابك!*\n\n` +
+        `📧 \`${task.accountEmail}\`\n` +
+        `💵 تم إضافة *$${task.amount} USDT* لرصيدك!\n` +
+        `💰 رصيدك الآن: *$${fmt(user.balance)} USDT*`,
+        { parse_mode: "Markdown", ...MAIN_MENU }
+      ).catch(() => {});
+    }
+  }
+
+  if (tasks.length > 0) {
+    console.log(`✅ تم دفع ${tasks.length} مهمة بعد التحقق`);
+  }
+}
+
+// فحص كل 10 دقائق
+setInterval(processVerifiedTasks, 10 * 60 * 1000);
 
 // ─── Auto Cancel After 20 Minutes ────────────────────────────────────────────
 
