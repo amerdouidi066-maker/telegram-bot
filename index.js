@@ -552,9 +552,9 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // ─── سحب (تظهر الشبكات دائماً) ─────────────────────────────────────────
+    // ─── سحب (الشبكات تظهر دائماً - بدون فحص الرصيد) ───────────────────────
     if (text === "💳 سحب") {
-      // الشبكات تظهر دائماً حتى لو الرصيد أقل من الحد الأدنى
+      // الشبكات تظهر دائماً حتى لو الرصيد صفر
       user.state = "awaiting_withdraw_network";
       user.stateMeta = null;
       await user.save();
@@ -602,12 +602,14 @@ bot.on("message", async (msg) => {
         return;
       }
 
-      // الفحص ديال الحد الأدنى بعد الاختيار
-      if (user.balance < 0.20) {
+      // الفحص ديال الحد الأدنى كيولي هنا - بعد ما يختار الشبكة
+      const totalNeeded = 0.20 + feeAmount; // المبلغ الأدنى + الرسوم
+      if (user.balance < totalNeeded) {
         bot.sendMessage(chatId, 
           `❌ *رصيدك غير كافٍ*\n\n` +
           `💰 رصيدك: *$${fmt(user.balance)} USDT*\n` +
-          `📉 الحد الأدنى: *$0.20 USDT*\n\n` +
+          `📉 تحتاج على الأقل: *$${fmt(totalNeeded)} USDT*\n` +
+          `(الحد الأدنى $0.20 + رسوم الشبكة $${fee})\n\n` +
           `اكمل مهام Gmail لزيادة رصيدك!`,
           { parse_mode: "Markdown", ...MAIN_MENU }
         );
