@@ -335,8 +335,8 @@ bot.on("message", async (msg) => {
       bot.sendMessage(chatId,
         `📧 *قم بتسجيل حساب Gmail باستخدام البيانات المحددة*\n\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
-        `👤 الاسم: \`${account.firstName}\`\n` +
-        `👤 اللقب: \`${account.lastName}\`\n` +
+        `👤 الاسم: *${account.firstName}*\n` +
+        `👤 اللقب: *${account.lastName}*\n` +
         `📧 البريد الإلكتروني: \`${account.email}\`\n` +
         `🔑 كلمة المرور: \`${account.password}\`\n` +
         `━━━━━━━━━━━━━━━━━━\n\n` +
