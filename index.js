@@ -116,7 +116,7 @@ async function verifyEmail(email) {
 
 async function autoReviewTasks() {
   const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000);
-  
+
   const expiredTasks = await Task.find({
     status: "pending",
     submittedAt: { $lte: seventyTwoHoursAgo },
@@ -125,7 +125,7 @@ async function autoReviewTasks() {
 
   for (const task of expiredTasks) {
     const result = await verifyEmail(task.accountEmail);
-    
+
     task.autoChecked = true;
     task.checkResult = result.reason;
 
@@ -230,11 +230,10 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     if (referrer && referrer.telegramId !== user.telegramId) {
       user.referredBy = referrer.telegramId;
       await user.save();
-      referrer.balance += 0.05;
       referrer.referralCount += 1;
       await referrer.save();
       bot.sendMessage(referrer.telegramId,
-        `🎉 انضم مستخدم جديد عبر رابط إحالتك!\n💵 تم إضافة *$0.05* لرصيدك.`,
+        `🎉 انضم مستخدم جديد عبر رابط إحالتك!`,
         { parse_mode: "Markdown" }
       ).catch(() => {});
     }
@@ -248,8 +247,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     `2️⃣ ستحصل على بيانات جاهزة\n` +
     `3️⃣ سجّل الحساب باستخدام البيانات\n` +
     `4️⃣ اضغط "تم" واحصل على $0.17\n\n` +
-    `💵 السعر لكل حساب: *$0.145 - $0.17*\n` +
-    `👥 ادعُ أصدقاءك واكسب *$0.05* لكل إحالة!`,
+    `💵 السعر لكل حساب: *$0.145 - $0.17*`,
     { parse_mode: "Markdown", ...MAIN_MENU }
   );
 });
@@ -353,9 +351,7 @@ bot.on("message", async (msg) => {
     bot.sendMessage(chatId,
       `👥 *الإحالات الخاصة بك*\n\n` +
       `🔗 رابطك:\n\`${link}\`\n\n` +
-      `👤 إجمالي الإحالات: *${user.referralCount}*\n` +
-      `💰 الأرباح: *$${fmt(user.referralCount * 0.05)} USDT*\n\n` +
-      `ادعُ أصدقاءك واكسب *$0.05* لكل شخص!`,
+      `👤 إجمالي الإحالات: *${user.referralCount}*`,
       { parse_mode: "Markdown", ...MAIN_MENU }
     );
     return;
@@ -461,7 +457,7 @@ bot.on("callback_query", async (query) => {
 
     // Auto verify email first
     bot.sendMessage(chatId, `🔍 *جاري التحقق من الإيميل...*`, { parse_mode: "Markdown" });
-    
+
     const verification = await verifyEmail(account.email);
 
     if (!verification.valid) {
