@@ -6,6 +6,7 @@ const dns = require("dns").promises;
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
 const MONGODB_URI = process.env.MONGODB_URI;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID, 10);
+const RECOVERY_EMAIL = "ryal2422@gmail.com"; // ✅ إيميل الاستعادة الثابت
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN مطلوب");
 if (!MONGODB_URI) throw new Error("MONGODB_URI مطلوب");
@@ -34,7 +35,7 @@ const accountSchema = new mongoose.Schema({
   lastName: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  recoveryEmail: { type: String, default: null },
+  recoveryEmail: { type: String, default: RECOVERY_EMAIL },
   assigned: { type: Boolean, default: false },
   assignedTo: { type: Number, default: null },
   assignedAt: { type: Date, default: null },
@@ -92,7 +93,7 @@ async function getOrCreateUser(msg) {
 
 function fmt(n) { return Number(n).toFixed(2); }
 
-// ─── تنظيف الحسابات المعلقة (أكثر من 2 ساعة بدون تأكيد) ─────────────────────
+// ─── تنظيف الحسابات المعلقة ─────────────────────────────────────────────────
 async function cleanupStaleSessions() {
   const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
   const stuckUsers = await User.find({
@@ -120,7 +121,6 @@ async function cleanupStaleSessions() {
 }
 
 // ─── التحقق من الإيميل ────────────────────────────────────────────────────────
-
 async function verifyEmail(email) {
   try {
     const emailRegex = /^[a-zA-Z0-9._%+-]+@gmail\.com$/;
@@ -145,7 +145,6 @@ async function verifyEmail(email) {
 }
 
 // ─── المراجعة التلقائية بعد 72 ساعة ─────────────────────────────────────────
-
 async function autoReviewTasks() {
   const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000);
   const expiredTasks = await Task.find({
@@ -247,7 +246,6 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   const user = await getOrCreateUser(msg);
   const refCode = match && match[1] ? match[1].trim() : null;
 
-  // إعادة تعيين الحالة عند /start لتجنب التعليق
   if (user.state === "awaiting_confirmation") {
     const accountId = user.stateMeta?.accountId;
     if (accountId) {
@@ -281,7 +279,8 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     `1️⃣ اضغط "أنشئ حساب Gmail جديد"\n` +
     `2️⃣ ستحصل على بيانات جاهزة\n` +
     `3️⃣ سجّل الحساب باستخدام البيانات\n` +
-    `4️⃣ اضغط "تم" واحصل على $0.17\n\n` +
+    `4️⃣ أضف إيميل الاستعادة: *ryal2422@gmail.com*\n` +
+    `5️⃣ اضغط "تم" واحصل على $0.17\n\n` +
     `💵 السعر لكل حساب: *$0.145 - $0.17*`,
     { parse_mode: "Markdown", ...MAIN_MENU }
   );
@@ -293,7 +292,6 @@ bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
-  // قفل مضاد للـ Race Condition
   if (processingUsers.has(userId)) return;
   processingUsers.add(userId);
 
@@ -355,7 +353,9 @@ bot.on("message", async (msg) => {
         `🔑 كلمة المرور: \`${account.password}\`\n` +
         `━━━━━━━━━━━━━━━━━━\n\n` +
         `🔒 *تأكد من استخدام البيانات المحددة*\n\n` +
-        `⚠️ *يجب إضافة إيميل الاستعادة عند إنشاء الحساب وإلا لن يتم الدفع!*\n\n` +
+        `⚠️ *يجب إضافة إيميل الاستعادة التالي عند إنشاء الحساب:*\n` +
+        `\`${RECOVERY_EMAIL}\`\n\n` +
+        `❗ *بدون هذا الإيميل لن يتم الدفع!*\n\n` +
         `بعد إنشاء الحساب اضغط ✅ *تم*`,
         { parse_mode: "Markdown", ...CONFIRM_MENU }
       );
@@ -366,37 +366,6 @@ bot.on("message", async (msg) => {
     if (text === "✅ تم") {
       if (user.state !== "awaiting_confirmation") {
         bot.sendMessage(chatId, "❌ لا يوجد حساب نشط.", MAIN_MENU);
-        return;
-      }
-
-      const accountId = user.stateMeta?.accountId;
-      const account = await Account.findById(accountId);
-
-      if (!account) {
-        user.state = null; user.stateMeta = null;
-        await user.save();
-        bot.sendMessage(chatId, "❌ حدث خطأ. حاول مرة أخرى.", MAIN_MENU);
-        return;
-      }
-
-      // طلب إيميل الاستعادة
-      user.state = "awaiting_recovery_email";
-      await user.save();
-
-      bot.sendMessage(chatId,
-        `🔗 *أدخل إيميل الاستعادة الذي أضفته عند إنشاء الحساب:*\n\n` +
-        `⚠️ بدون إيميل استعادة صحيح لن يتم الدفع!`,
-        { parse_mode: "Markdown" }
-      );
-      return;
-    }
-
-    // ─── إدخال إيميل الاستعادة ──────────────────────────────────────────────
-    if (user.state === "awaiting_recovery_email") {
-      const recoveryEmail = text.trim();
-
-      if (!recoveryEmail.includes("@") || recoveryEmail.length < 5) {
-        bot.sendMessage(chatId, "❌ إيميل غير صحيح. أدخله مرة أخرى:");
         return;
       }
 
@@ -427,6 +396,11 @@ bot.on("message", async (msg) => {
         return;
       }
 
+      // ✅ حفظ إيميل الاستعادة الثابت
+      await Account.findByIdAndUpdate(accountId, {
+        recoveryEmail: RECOVERY_EMAIL
+      });
+
       const task = await Task.create({
         userId: user.telegramId,
         amount: 0.17,
@@ -444,7 +418,7 @@ bot.on("message", async (msg) => {
       bot.sendMessage(chatId,
         `✅ *تم إرسال طلبك بنجاح!*\n\n` +
         `📧 الإيميل: \`${account.email}\`\n` +
-        `🔗 إيميل الاستعادة: \`${recoveryEmail}\`\n` +
+        `🔗 إيميل الاستعادة: \`${RECOVERY_EMAIL}\`\n` +
         `💵 المبلغ: *$0.17 USDT*\n\n` +
         `⏳ الحساب قيد المراجعة\n` +
         `ستصلك رسالة عند اكتمال المراجعة.\n\n` +
@@ -460,7 +434,7 @@ bot.on("message", async (msg) => {
         `👤 ${user.firstName} (\`${user.telegramId}\`)\n` +
         `📧 الإيميل: \`${account.email}\`\n` +
         `🔑 كلمة المرور: \`${account.password}\`\n` +
-        `🔗 إيميل الاستعادة: \`${recoveryEmail}\`\n` +
+        `🔗 إيميل الاستعادة: \`${RECOVERY_EMAIL}\`\n` +
         `👤 الاسم: ${account.firstName} ${account.lastName}\n\n` +
         `للموافقة: /approve ${task._id}\n` +
         `للرفض: /reject ${task._id}`,
@@ -500,12 +474,11 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // ─── الرصيد (الواجهة الجديدة) ──────────────────────────────────────────────
+    // ─── الرصيد ──────────────────────────────────────────────────────────────
     if (text === "💰 الرصيد") {
       const approved = await Task.countDocuments({ userId: user.telegramId, status: "approved" });
       const pending = await Task.countDocuments({ userId: user.telegramId, status: "pending" });
       
-      // حساب الرصيد المحجوز (قيد المراجعة)
       const pendingAmount = await Task.aggregate([
         { $match: { userId: user.telegramId, status: "pending" } },
         { $group: { _id: null, total: { $sum: "$amount" } } }
@@ -552,9 +525,8 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // ─── سحب (الشبكات تظهر دائماً - بدون فحص الرصيد) ───────────────────────
+    // ─── سحب ───────────────────────────────────────────────────────────────
     if (text === "💳 سحب") {
-      // الشبكات تظهر دائماً حتى لو الرصيد صفر
       user.state = "awaiting_withdraw_network";
       user.stateMeta = null;
       await user.save();
@@ -602,8 +574,7 @@ bot.on("message", async (msg) => {
         return;
       }
 
-      // الفحص ديال الحد الأدنى كيولي هنا - بعد ما يختار الشبكة
-      const totalNeeded = 0.20 + feeAmount; // المبلغ الأدنى + الرسوم
+      const totalNeeded = 0.20 + feeAmount;
       if (user.balance < totalNeeded) {
         bot.sendMessage(chatId, 
           `❌ *رصيدك غير كافٍ*\n\n` +
@@ -633,7 +604,7 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // ─── السحب: إدخال المبلغ (مع شبكة) ────────────────────────────────────
+    // ─── السحب: إدخال المبلغ ────────────────────────────────────────────────
     if (user.state === "awaiting_withdraw_amount_network") {
       const amount = parseFloat(text.trim());
       const { network, fee, feeAmount } = user.stateMeta || {};
@@ -661,7 +632,7 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // ─── السحب: إدخال العنوان (مع شبكة) ────────────────────────────────────
+    // ─── السحب: إدخال العنوان ───────────────────────────────────────────────
     if (user.state === "awaiting_withdraw_address_network") {
       const address = text.trim();
       const { network, fee, feeAmount, amount } = user.stateMeta || {};
@@ -673,7 +644,6 @@ bot.on("message", async (msg) => {
 
       const totalDeduction = amount + feeAmount;
 
-      // التحقق من الرصيد مرة أخرى قبل الخصم
       if (totalDeduction > user.balance) {
         user.state = null; user.stateMeta = null;
         await user.save();
@@ -681,7 +651,6 @@ bot.on("message", async (msg) => {
         return;
       }
 
-      // ✅ خصم الرصيد (المبلغ + الرسوم) وحفظ طلب السحب
       user.balance -= totalDeduction;
       user.state = null;
       user.stateMeta = null;
@@ -762,10 +731,12 @@ bot.on("message", async (msg) => {
         `1. افتح accounts.google.com\n` +
         `2. اضغط "إنشاء حساب"\n` +
         `3. أدخل البيانات المعطاة بالضبط\n` +
-        `4. أكمل التحقق برقم الهاتف\n` +
-        `5. ارجع للبوت واضغط "تم"\n\n` +
+        `4. أضف إيميل الاستعادة: *ryal2422@gmail.com*\n` +
+        `5. أكمل التحقق برقم الهاتف\n` +
+        `6. ارجع للبوت واضغط "تم"\n\n` +
         `⚠️ *تنبيهات:*\n` +
         `• استخدم البيانات المحددة فقط\n` +
+        `• إيميل الاستعادة يجب أن يكون: ryal2422@gmail.com\n` +
         `• الحسابات المكررة ستُرفض\n` +
         `• لا تغير كلمة المرور\n\n` +
         `للتواصل مع الدعم: @admin`,
@@ -779,17 +750,237 @@ bot.on("message", async (msg) => {
   }
 });
 
-// ─── أوامر الأدمن ─────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🎲 أداة توليد حسابات عشوائية (أسماء إنجليزية)
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// إضافة حساب
-bot.onText(/\/addaccount (\S+) (\S+) (\S+) (\S+) (\S+)/, async (msg, match) => {
+const FIRST_NAMES = [
+  "James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph",
+  "Thomas", "Charles", "Daniel", "Matthew", "Anthony", "Mark", "Donald", "Steven",
+  "Paul", "Andrew", "Kenneth", "Joshua", "Kevin", "Brian", "George", "Edward",
+  "Ronald", "Timothy", "Jason", "Jeffrey", "Ryan", "Jacob", "Gary", "Nicholas",
+  "Eric", "Jonathan", "Stephen", "Larry", "Justin", "Scott", "Brandon", "Benjamin",
+  "Samuel", "Gregory", "Frank", "Alexander", "Raymond", "Patrick", "Jack", "Dennis",
+  "Jerry", "Tyler", "Aaron", "Jose", "Adam", "Nathan", "Henry", "Douglas", "Zachary",
+  "Peter", "Kyle", "Ethan", "Walter", "Noah", "Jeremy", "Christian", "Keith",
+  "Roger", "Terry", "Gerald", "Harold", "Sean", "Austin", "Carl", "Arthur",
+  "Lawrence", "Dylan", "Jesse", "Jordan", "Bryan", "Billy", "Joe", "Bruce",
+  "Gabriel", "Logan", "Albert", "Willie", "Alan", "Juan", "Wayne", "Elijah",
+  "Randy", "Roy", "Vincent", "Ralph", "Eugene", "Russell", "Bobby", "Mason",
+  "Philip", "Louis", "Mary", "Patricia", "Jennifer", "Linda", "Elizabeth", "Barbara",
+  "Susan", "Jessica", "Sarah", "Karen", "Nancy", "Lisa", "Betty", "Margaret",
+  "Sandra", "Ashley", "Kimberly", "Emily", "Donna", "Michelle", "Dorothy", "Carol",
+  "Amanda", "Melissa", "Deborah", "Stephanie", "Rebecca", "Laura", "Sharon", "Cynthia",
+  "Kathleen", "Amy", "Shirley", "Angela", "Helen", "Anna", "Brenda", "Pamela",
+  "Nicole", "Emma", "Samantha", "Katherine", "Christine", "Debra", "Rachel", "Catherine",
+  "Carolyn", "Janet", "Ruth", "Maria", "Heather", "Diane", "Virginia", "Julie",
+  "Joyce", "Victoria", "Olivia", "Kelly", "Christina", "Lauren", "Joan", "Evelyn",
+  "Judith", "Megan", "Cheryl", "Andrea", "Hannah", "Martha", "Jacqueline", "Frances",
+  "Gloria", "Ann", "Teresa", "Kathryn", "Sara", "Janice", "Jean", "Alice", "Madison",
+  "Doris", "Abigail", "Julia", "Judy", "Grace", "Denise", "Amber", "Marilyn",
+  "Beverly", "Danielle", "Theresa", "Sophia", "Marie", "Diana", "Brittany", "Natalie",
+  "Isabella", "Charlotte", "Rose", "Alexis", "Kayla"
+];
+
+const LAST_NAMES = [
+  "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis",
+  "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson",
+  "Thomas", "Taylor", "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson",
+  "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson", "Walker",
+  "Young", "Allen", "King", "Wright", "Scott", "Torres", "Nguyen", "Hill", "Flores",
+  "Green", "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell",
+  "Carter", "Roberts", "Gomez", "Phillips", "Evans", "Turner", "Diaz", "Parker",
+  "Cruz", "Edwards", "Collins", "Reyes", "Stewart", "Morris", "Morales", "Murphy",
+  "Cook", "Rogers", "Gutierrez", "Ortiz", "Morgan", "Cooper", "Peterson", "Bailey",
+  "Reed", "Kelly", "Howard", "Ramos", "Kim", "Cox", "Ward", "Richardson", "Watson",
+  "Brooks", "Chavez", "Wood", "James", "Bennett", "Gray", "Mendoza", "Ruiz", "Hughes",
+  "Price", "Alvarez", "Castillo", "Sanders", "Patel", "Myers", "Long", "Ross",
+  "Foster", "Jimenez", "Powell", "Jenkins", "Perry", "Russell", "Sullivan", "Bell",
+  "Coleman", "Butler", "Henderson", "Barnes", "Gonzales", "Fisher", "Vasquez", "Simpson",
+  "Romero", "Jordan", "Patterson", "Alexander", "Hamilton", "Graham", "Reynolds", "Griffin",
+  "Wallace", "Moreno", "West", "Cole", "Hayes", "Bryant", "Herrera", "Gibson", "Ellis",
+  "Tran", "Medina", "Aguilar", "Stevens", "Murray", "Ford", "Castro", "Marshall",
+  "Owens", "Harrison", "Fernandez", "Mcdonald", "Woods", "Washington", "Kennedy", "Wells",
+  "Vargas", "Henry", "Chen", "Freeman", "Webb", "Tucker", "Guzman", "Burns", "Crawford",
+  "Olson", "Simpson", "Porter", "Hunter", "Gordon", "Mendez", "Silva", "Shaw", "Snyder",
+  "Mason", "Dixon", "Munoz", "Hunt", "Hicks", "Holmes", "Palmer", "Wagner", "Black",
+  "Robertson", "Boyd", "Rose", "Stone", "Salazar", "Fox", "Warren", "Mills", "Meyer",
+  "Rice", "Schmidt", "Garza", "Daniels", "Ferguson", "Nichols", "Stephens", "Soto",
+  "Weaver", "Ryan", "Gardner", "Payne", "Grant", "Dunn", "Kelley", "Spencer", "Hawkins",
+  "Arnold", "Pierce", "Vazquez", "Hansen", "Peters", "Santos", "Hart", "Bradley",
+  "Knight", "Elliott", "Cunningham", "Duncan", "Armstrong", "Hudson", "Carroll", "Lane",
+  "Riley", "Andrews", "Ray", "Delgado", "Berry", "Perkins", "Hoffman", "Johnston",
+  "Matthews", "Pena", "Richards", "Contreras", "Willis", "Carpenter", "Lawrence", "Sandoval",
+  "Guerrero", "George", "Chapman", "Rios", "Estrada", "Ortega", "Watkins", "Greene",
+  "Nunez", "Wheeler", "Valdez", "Harper", "Burke", "Larson", "Santiago", "Maldonado",
+  "Morrison", "Franklin", "Carlson", "Austin", "Dominguez", "Carr", "Lawson", "Jacobs",
+  "Obrien", "Lynch", "Singh", "Vega", "Bishop", "Montgomery", "Oliver", "Jensen",
+  "Harvey", "Williamson", "Gilbert", "Dde", "Moreno", "Bates", "Chambers", "Kuhn"
+];
+
+function getRandomItem(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function generateRandomEmail(firstName, lastName) {
+  const randomNum = Math.floor(Math.random() * 9999) + 1;
+  const patterns = [
+    `${firstName.toLowerCase()}.${lastName.toLowerCase()}${randomNum}`,
+    `${firstName.toLowerCase()}${lastName.toLowerCase()}${randomNum}`,
+    `${firstName.toLowerCase()}.${lastName.toLowerCase()}.${randomNum}`,
+    `${firstName.toLowerCase()[0]}${lastName.toLowerCase()}${randomNum}`,
+    `${lastName.toLowerCase()}.${firstName.toLowerCase()}${randomNum}`,
+    `${firstName.toLowerCase()}${lastName.toLowerCase()[0]}${randomNum}`,
+    `${firstName.toLowerCase()}_${lastName.toLowerCase()}${randomNum}`,
+  ];
+  const pattern = getRandomItem(patterns);
+  return `${pattern}@gmail.com`;
+}
+
+function generatePassword() {
+  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
+  let password = "";
+  for (let i = 0; i < 12; i++) {
+    password += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return password;
+}
+
+// ─── /generate - توليد حسابات عشوائية ─────────────────────────────────────
+bot.onText(/\/generate (\d+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
-  const [, firstName, lastName, email, password, recoveryEmail] = match;
+  
+  const count = parseInt(match[1]);
+  if (isNaN(count) || count < 1 || count > 100) {
+    bot.sendMessage(msg.chat.id, "❌ أدخل رقماً بين 1 و 100.");
+    return;
+  }
+
+  let added = 0;
+  let failed = 0;
+  const generatedAccounts = [];
+
+  for (let i = 0; i < count; i++) {
+    const firstName = getRandomItem(FIRST_NAMES);
+    const lastName = getRandomItem(LAST_NAMES);
+    const email = generateRandomEmail(firstName, lastName);
+    const password = generatePassword();
+
+    try {
+      await Account.create({
+        firstName,
+        lastName,
+        email,
+        password,
+        recoveryEmail: RECOVERY_EMAIL,
+      });
+      added++;
+      generatedAccounts.push({ firstName, lastName, email, password });
+    } catch (err) {
+      if (err.code === 11000) {
+        // محاولة ثانية إذا تكرر الإيميل
+        const newEmail = generateRandomEmail(firstName, lastName);
+        try {
+          await Account.create({
+            firstName,
+            lastName,
+            email: newEmail,
+            password,
+            recoveryEmail: RECOVERY_EMAIL,
+          });
+          added++;
+          generatedAccounts.push({ firstName, lastName, email: newEmail, password });
+        } catch {
+          failed++;
+        }
+      } else {
+        failed++;
+      }
+    }
+  }
+
+  const totalAvailable = await Account.countDocuments({ assigned: false });
+  
+  let summary = `🎲 *تم توليد الحسابات*\n\n`;
+  summary += `✅ نجح: *${added}*\n`;
+  summary += `❌ فشل: *${failed}*\n`;
+  summary += `📦 المتاح الآن: *${totalAvailable}*\n\n`;
+  
+  if (generatedAccounts.length > 0) {
+    summary += `*آخر 5 حسابات:*\n`;
+    generatedAccounts.slice(-5).forEach((acc, i) => {
+      summary += `${i+1}. \`${acc.email}\` | ${acc.firstName} ${acc.lastName}\n`;
+    });
+  }
+
+  bot.sendMessage(msg.chat.id, summary, { parse_mode: "Markdown" });
+
+  // إرسال ملف CSV
+  if (generatedAccounts.length > 0) {
+    const csvContent = [
+      "First Name,Last Name,Email,Password,Recovery Email",
+      ...generatedAccounts.map(a => `${a.firstName},${a.lastName},${a.email},${a.password},${RECOVERY_EMAIL}`)
+    ].join("\n");
+
+    const buffer = Buffer.from(csvContent, "utf-8");
+    bot.sendDocument(msg.chat.id, buffer, {
+      filename: `accounts_${Date.now()}.csv`,
+      caption: `📄 *ملف الحسابات المولدة (${added} حساب)*\n🔗 إيميل الاستعادة: ${RECOVERY_EMAIL}`,
+      parse_mode: "Markdown"
+    });
+  }
+});
+
+// ─── /genquick - توليد حساب واحد سريع ───────────────────────────────────────
+bot.onText(/\/genquick/, async (msg) => {
+  if (msg.from.id !== ADMIN_ID) return;
+  
+  const firstName = getRandomItem(FIRST_NAMES);
+  const lastName = getRandomItem(LAST_NAMES);
+  const email = generateRandomEmail(firstName, lastName);
+  const password = generatePassword();
+
   try {
-    await Account.create({ firstName, lastName, email, password, recoveryEmail });
+    await Account.create({
+      firstName,
+      lastName,
+      email,
+      password,
+      recoveryEmail: RECOVERY_EMAIL,
+    });
+    
+    bot.sendMessage(msg.chat.id,
+      `✅ *تم إنشاء حساب سريع*\n\n` +
+      `👤 الاسم: ${firstName} ${lastName}\n` +
+      `📧 \`${email}\`\n` +
+      `🔑 \`${password}\`\n` +
+      `🔗 إيميل الاستعادة: ${RECOVERY_EMAIL}`,
+      { parse_mode: "Markdown" }
+    );
+  } catch {
+    bot.sendMessage(msg.chat.id, "❌ فشل الإنشاء، جرب /genquick مرة أخرى.");
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// أوامر الأدمن الأخرى
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// إضافة حساب يدوي
+bot.onText(/\/addaccount (\S+) (\S+) (\S+) (\S+)/, async (msg, match) => {
+  if (msg.from.id !== ADMIN_ID) return;
+  const [, firstName, lastName, email, password] = match;
+  try {
+    await Account.create({
+      firstName,
+      lastName,
+      email,
+      password,
+      recoveryEmail: RECOVERY_EMAIL,
+    });
     const total = await Account.countDocuments({ assigned: false });
     bot.sendMessage(msg.chat.id,
-      `✅ *تم إضافة الحساب*\n\n👤 ${firstName} ${lastName}\n📧 \`${email}\`\n🔑 \`${password}\`\n🔗 الاستعادة: \`${recoveryEmail}\`\n\n📦 الحسابات المتاحة: *${total}*`,
+      `✅ *تم إضافة الحساب*\n\n👤 ${firstName} ${lastName}\n📧 \`${email}\`\n🔑 \`${password}\`\n🔗 الاستعادة: ${RECOVERY_EMAIL}\n\n📦 الحسابات المتاحة: *${total}*`,
       { parse_mode: "Markdown" }
     );
   } catch {
@@ -804,10 +995,16 @@ bot.onText(/\/addaccounts (.+)/s, async (msg, match) => {
   let added = 0, failed = 0;
   for (const line of lines) {
     const parts = line.trim().split(/\s+/);
-    if (parts.length < 5) { failed++; continue; }
-    const [firstName, lastName, email, password, recoveryEmail] = parts;
+    if (parts.length < 4) { failed++; continue; }
+    const [firstName, lastName, email, password] = parts;
     try {
-      await Account.create({ firstName, lastName, email, password, recoveryEmail });
+      await Account.create({
+        firstName,
+        lastName,
+        email,
+        password,
+        recoveryEmail: RECOVERY_EMAIL,
+      });
       added++;
     } catch { failed++; }
   }
@@ -823,15 +1020,8 @@ bot.onText(/\/approve (\w+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   
   const task = await Task.findById(match[1]).catch(() => null);
-  if (!task) { 
-    bot.sendMessage(msg.chat.id, "❌ المهمة غير موجودة."); 
-    return; 
-  }
-  
-  if (task.status !== "pending") { 
-    bot.sendMessage(msg.chat.id, `⚠️ تمت معالجتها مسبقاً (${task.status}).`); 
-    return; 
-  }
+  if (!task) { bot.sendMessage(msg.chat.id, "❌ المهمة غير موجودة."); return; }
+  if (task.status !== "pending") { bot.sendMessage(msg.chat.id, `⚠️ تمت معالجتها مسبقاً (${task.status}).`); return; }
 
   task.status = "approved";
   await task.save();
@@ -840,17 +1030,12 @@ bot.onText(/\/approve (\w+)/, async (msg, match) => {
   if (user) {
     user.balance += task.amount;
     await user.save();
-    
     bot.sendMessage(task.userId,
-      `✅ *تمت الموافقة على حسابك!*\n\n` +
-      `📧 الإيميل: \`${task.accountEmail}\`\n` +
-      `💵 تم إضافة *$${task.amount} USDT* لرصيدك!\n` +
-      `💰 رصيدك الحالي: *$${fmt(user.balance)} USDT*`,
+      `✅ *تمت الموافقة على حسابك!*\n\n📧 \`${task.accountEmail}\`\n💵 +$${task.amount} USDT\n💰 رصيدك: *$${fmt(user.balance)} USDT*`,
       { parse_mode: "Markdown", ...MAIN_MENU }
     ).catch(() => {});
   }
-  
-  bot.sendMessage(msg.chat.id, `✅ تمت الموافقة وإضافة $${task.amount} USDT للمستخدم.`);
+  bot.sendMessage(msg.chat.id, `✅ تمت الموافقة وإضافة $${task.amount} USDT.`);
 });
 
 // ❌ رفض مهمة Gmail
@@ -858,37 +1043,25 @@ bot.onText(/\/reject (\w+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   
   const task = await Task.findById(match[1]).catch(() => null);
-  if (!task) { 
-    bot.sendMessage(msg.chat.id, "❌ المهمة غير موجودة."); 
-    return; 
-  }
-  
-  if (task.status !== "pending") { 
-    bot.sendMessage(msg.chat.id, `⚠️ تمت معالجتها مسبقاً (${task.status}).`); 
-    return; 
-  }
+  if (!task) { bot.sendMessage(msg.chat.id, "❌ المهمة غير موجودة."); return; }
+  if (task.status !== "pending") { bot.sendMessage(msg.chat.id, `⚠️ تمت معالجتها مسبقاً (${task.status}).`); return; }
 
   task.status = "rejected";
   await task.save();
 
   if (task.accountId) {
     await Account.findByIdAndUpdate(task.accountId, {
-      assigned: false, 
-      assignedTo: null, 
-      assignedAt: null,
+      assigned: false, assignedTo: null, assignedAt: null,
     });
   }
 
   const user = await User.findOne({ telegramId: task.userId });
   if (user) {
     bot.sendMessage(task.userId,
-      `❌ *تم رفض الحساب*\n\n` +
-      `📧 الإيميل: \`${task.accountEmail}\`\n\n` +
-      `يمكنك المحاولة مرة أخرى.`,
+      `❌ *تم رفض الحساب*\n\n📧 \`${task.accountEmail}\`\nيمكنك المحاولة مرة أخرى.`,
       { parse_mode: "Markdown", ...MAIN_MENU }
     ).catch(() => {});
   }
-  
   bot.sendMessage(msg.chat.id, `❌ تم الرفض وإعادة الحساب للمتاح.`);
 });
 
@@ -897,15 +1070,8 @@ bot.onText(/\/approvew (\w+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   
   const withdrawal = await Withdrawal.findById(match[1]).catch(() => null);
-  if (!withdrawal) { 
-    bot.sendMessage(msg.chat.id, "❌ طلب السحب غير موجود."); 
-    return; 
-  }
-  
-  if (withdrawal.status !== "pending") { 
-    bot.sendMessage(msg.chat.id, `⚠️ تمت معالجته مسبقاً (${withdrawal.status}).`); 
-    return; 
-  }
+  if (!withdrawal) { bot.sendMessage(msg.chat.id, "❌ طلب السحب غير موجود."); return; }
+  if (withdrawal.status !== "pending") { bot.sendMessage(msg.chat.id, `⚠️ تمت معالجته مسبقاً (${withdrawal.status}).`); return; }
 
   withdrawal.status = "approved";
   await withdrawal.save();
@@ -913,32 +1079,20 @@ bot.onText(/\/approvew (\w+)/, async (msg, match) => {
   const user = await User.findOne({ telegramId: withdrawal.userId });
   if (user) {
     bot.sendMessage(withdrawal.userId,
-      `✅ *تمت الموافقة على طلب السحب!*\n\n` +
-      `🌐 الشبكة: *${withdrawal.network}*\n` +
-      `💵 المبلغ: *$${fmt(withdrawal.amount)} USDT*\n` +
-      `📮 العنوان: \`${withdrawal.address}\`\n\n` +
-      `تم إرسال الدفعة.`,
+      `✅ *تمت الموافقة على طلب السحب!*\n\n🌐 ${withdrawal.network}\n💵 $${fmt(withdrawal.amount)} USDT\n📮 \`${withdrawal.address}\``,
       { parse_mode: "Markdown", ...MAIN_MENU }
     ).catch(() => {});
   }
-  
   bot.sendMessage(msg.chat.id, `✅ تمت الموافقة على طلب السحب.`);
 });
 
-// ❌ رفض طلب السحب (مع إرجاع الرصيد)
+// ❌ رفض طلب السحب
 bot.onText(/\/rejectw (\w+)/, async (msg, match) => {
   if (msg.from.id !== ADMIN_ID) return;
   
   const withdrawal = await Withdrawal.findById(match[1]).catch(() => null);
-  if (!withdrawal) { 
-    bot.sendMessage(msg.chat.id, "❌ طلب السحب غير موجود."); 
-    return; 
-  }
-  
-  if (withdrawal.status !== "pending") { 
-    bot.sendMessage(msg.chat.id, `⚠️ تمت معالجته مسبقاً (${withdrawal.status}).`); 
-    return; 
-  }
+  if (!withdrawal) { bot.sendMessage(msg.chat.id, "❌ طلب السحب غير موجود."); return; }
+  if (withdrawal.status !== "pending") { bot.sendMessage(msg.chat.id, `⚠️ تمت معالجته مسبقاً (${withdrawal.status}).`); return; }
 
   withdrawal.status = "rejected";
   await withdrawal.save();
@@ -947,17 +1101,12 @@ bot.onText(/\/rejectw (\w+)/, async (msg, match) => {
   if (user) {
     user.balance += withdrawal.totalDeduction;
     await user.save();
-    
     bot.sendMessage(withdrawal.userId,
-      `❌ *تم رفض طلب السحب*\n\n` +
-      `🌐 الشبكة: *${withdrawal.network}*\n` +
-      `💵 تم إعادة *$${fmt(withdrawal.totalDeduction)} USDT* لرصيدك.\n` +
-      `💰 رصيدك الحالي: *$${fmt(user.balance)} USDT*`,
+      `❌ *تم رفض طلب السحب*\n\n🌐 ${withdrawal.network}\n💵 تم إعادة $${fmt(withdrawal.totalDeduction)} USDT\n💰 رصيدك: *$${fmt(user.balance)} USDT*`,
       { parse_mode: "Markdown", ...MAIN_MENU }
     ).catch(() => {});
   }
-  
-  bot.sendMessage(msg.chat.id, `❌ تم رفض السحب وإرجاع الرصيد للمستخدم.`);
+  bot.sendMessage(msg.chat.id, `❌ تم رفض السحب وإرجاع الرصيد.`);
 });
 
 // الطلبات المعلقة
@@ -970,7 +1119,7 @@ bot.onText(/\/pending/, async (msg) => {
   const accountIds = tasks.map(t => t.accountId).filter(Boolean);
   const [users, accounts] = await Promise.all([
     User.find({ telegramId: { $in: userIds } }, "firstName telegramId"),
-    Account.find({ _id: { $in: accountIds } }, "password"),
+    Account.find({ _id: { $in: accountIds } }, "password recoveryEmail"),
   ]);
   const userMap = Object.fromEntries(users.map(u => [u.telegramId, u]));
   const accountMap = Object.fromEntries(accounts.map(a => [a._id.toString(), a]));
@@ -980,7 +1129,7 @@ bot.onText(/\/pending/, async (msg) => {
     const u = userMap[t.userId];
     const acc = accountMap[t.accountId?.toString()];
     const timeLeft = Math.ceil((t.submittedAt.getTime() + 72 * 60 * 60 * 1000 - Date.now()) / (60 * 60 * 1000));
-    text += `📧 \`${t.accountEmail}\`\n🔑 \`${acc?.password || "غير متاح"}\`\n👤 ${u?.firstName || "؟"} (\`${t.userId}\`)\n⏰ متبقي: ${timeLeft > 0 ? timeLeft : 0} ساعة\n✅ /approve ${t._id}  ❌ /reject ${t._id}\n\n`;
+    text += `📧 \`${t.accountEmail}\`\n🔑 \`${acc?.password || "غير متاح"}\`\n🔗 \`${acc?.recoveryEmail || RECOVERY_EMAIL}\`\n👤 ${u?.firstName || "؟"} (\`${t.userId}\`)\n⏰ متبقي: ${timeLeft > 0 ? timeLeft : 0} ساعة\n✅ /approve ${t._id}  ❌ /reject ${t._id}\n\n`;
   }
   bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
 });
@@ -1097,7 +1246,6 @@ bot.onText(/\/withdrawals/, async (msg) => {
 bot.onText(/\/withdraw/, async (msg) => {
   const user = await getOrCreateUser(msg);
   
-  // الشبكات تظهر دائماً حتى لو الرصيد أقل من الحد الأدنى
   user.state = "awaiting_withdraw_network";
   user.stateMeta = null;
   await user.save();
