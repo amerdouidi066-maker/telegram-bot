@@ -176,7 +176,7 @@ const MAIN_MENU = {
   },
 };
 
-// ✅ الواجهة الجديدة - تظهر أسفل الشاشة
+// الواجهة التي تظهر أسفل الشاشة عند إنشاء الحساب
 const CONFIRM_MENU = {
   reply_markup: {
     keyboard: [
@@ -234,17 +234,26 @@ bot.on("message", async (msg) => {
 
   const text = msg.text;
 
-  // ─── أنشئ حساب Gmail جديد ───────────────────────────────────────────────────
+  // ─── أنشئ حساب Gmail جديد ─────────────────────────────────────────────────
   if (text === "➕ أنشئ حساب Gmail جديد") {
-    const pending = await Task.findOne({ userId: user.telegramId, status: "pending" });
-    if (pending) {
-      const timeLeft = Math.ceil((pending.submittedAt.getTime() + 72 * 60 * 60 * 1000 - Date.now()) / (60 * 60 * 1000));
+
+    // منع إنشاء أكثر من حسابين قيد المراجعة
+    const pendingTasks = await Task.find({ userId: user.telegramId, status: "pending" });
+    if (pendingTasks.length >= 2) {
+      let replyMsg = `⏳ *لديك حسابان قيد المراجعة*\n\n`;
+      pendingTasks.forEach((t, i) => {
+        replyMsg += `📧 الحساب ${i + 1}: \`${t.accountEmail}\`\n`;
+      });
+      replyMsg += `\n⚠️ لا يمكنك إنشاء حساب جديد حتى تنتهي مراجعة حساباتك الحالية.`;
+      bot.sendMessage(chatId, replyMsg, { parse_mode: "Markdown" });
+      return;
+    }
+
+    // تذكير المستخدم إذا كان لديه حساب نشط قيد الإنشاء
+    if (user.state === "awaiting_confirmation") {
       bot.sendMessage(chatId,
-        `⏳ *لديك حساب قيد المراجعة*\n\n` +
-        `📧 الإيميل: \`${pending.accountEmail}\`\n` +
-        `⏰ الوقت المتبقي: *${timeLeft > 0 ? timeLeft : 0} ساعة*\n\n` +
-        `انتظر حتى تتم مراجعته تلقائياً.`,
-        { parse_mode: "Markdown" }
+        `⚠️ *لديك حساب قيد الإنشاء حالياً*\n\nاضغط ✅ *تم* بعد إنشاء الحساب\nأو ❌ *إلغاء إنشاء الحساب* للإلغاء.`,
+        { parse_mode: "Markdown", ...CONFIRM_MENU }
       );
       return;
     }
@@ -267,7 +276,6 @@ bot.on("message", async (msg) => {
     user.stateMeta = { accountId: account._id.toString() };
     await user.save();
 
-    // ✅ إرسال البيانات مع الواجهة الجديدة أسفل الشاشة
     bot.sendMessage(chatId,
       `📧 *قم بتسجيل حساب Gmail باستخدام البيانات المحددة*\n\n` +
       `━━━━━━━━━━━━━━━━━━\n` +
@@ -276,15 +284,14 @@ bot.on("message", async (msg) => {
       `📧 البريد الإلكتروني: \`${account.email}\`\n` +
       `🔑 كلمة المرور: \`${account.password}\`\n` +
       `━━━━━━━━━━━━━━━━━━\n\n` +
-      `🔒 *تأكد من استخدام البيانات المحددة*\n` +
-      `⏳ سيتم المراجعة تلقائياً خلال *72 ساعة*\n\n` +
+      `🔒 *تأكد من استخدام البيانات المحددة*\n\n` +
       `بعد إنشاء الحساب اضغط ✅ *تم*`,
       { parse_mode: "Markdown", ...CONFIRM_MENU }
     );
     return;
   }
 
-  // ─── زر تم ───────────────────────────────────────────────────────────────────
+  // ─── زر تم ────────────────────────────────────────────────────────────────
   if (text === "✅ تم") {
     if (user.state !== "awaiting_confirmation") {
       bot.sendMessage(chatId, "❌ لا يوجد حساب نشط.", MAIN_MENU);
@@ -314,7 +321,7 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    const task = await Task.create({
+    await Task.create({
       userId: user.telegramId,
       amount: 0.17,
       accountEmail: account.email,
@@ -325,12 +332,19 @@ bot.on("message", async (msg) => {
     user.state = null; user.stateMeta = null;
     await user.save();
 
+    // إبلاغ المستخدم هل يمكنه إنشاء حساب ثانٍ
+    const remainingPending = await Task.countDocuments({ userId: user.telegramId, status: "pending" });
+    const canCreateMore = remainingPending < 2;
+
     bot.sendMessage(chatId,
       `✅ *تم إرسال طلبك بنجاح!*\n\n` +
       `📧 الإيميل: \`${account.email}\`\n` +
       `💵 المبلغ: *$0.17 USDT*\n\n` +
-      `⏳ سيتم المراجعة التلقائية خلال *72 ساعة*\n` +
-      `ستصلك رسالة عند اكتمال المراجعة.`,
+      `⏳ سيتم المراجعة تلقائياً\n` +
+      `ستصلك رسالة عند اكتمال المراجعة.\n\n` +
+      (canCreateMore
+        ? `💡 يمكنك إنشاء حساب آخر الآن!`
+        : `⚠️ وصلت للحد الأقصى (حسابان). انتظر انتهاء المراجعة.`),
       { parse_mode: "Markdown", ...MAIN_MENU }
     );
 
@@ -342,7 +356,6 @@ bot.on("message", async (msg) => {
       `📧 الإيميل: \`${account.email}\`\n` +
       `🔑 كلمة المرور: \`${account.password}\`\n` +
       `👤 الاسم: ${account.firstName} ${account.lastName}\n\n` +
-      `🤖 سيتم المراجعة تلقائياً بعد 72 ساعة\n\n` +
       `للموافقة: /approve ${user.telegramId} ${taskIndex}\n` +
       `للرفض: /reject ${user.telegramId} ${taskIndex}`,
       { parse_mode: "Markdown" }
@@ -350,7 +363,7 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // ─── زر إلغاء إنشاء الحساب ───────────────────────────────────────────────────
+  // ─── زر إلغاء إنشاء الحساب ───────────────────────────────────────────────
   if (text === "❌ إلغاء إنشاء الحساب") {
     const accountId = user.stateMeta?.accountId;
     if (accountId) {
@@ -362,7 +375,7 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // ─── حساباتي ──────────────────────────────────────────────────────────────────
+  // ─── حساباتي ──────────────────────────────────────────────────────────────
   if (text === "📋 حساباتي") {
     const tasks = await Task.find({ userId: user.telegramId }).sort({ createdAt: -1 }).limit(10);
     if (!tasks.length) {
@@ -371,17 +384,16 @@ bot.on("message", async (msg) => {
     }
     let txt = `📋 *حساباتك*\n\n`;
     for (const t of tasks) {
+      // إخفاء وقت المراجعة - عرض الحالة فقط
       const statusEmoji = t.status === "approved" ? "✅" : t.status === "rejected" ? "❌" : "⏳";
-      const timeLeft = t.status === "pending" ? Math.ceil((t.submittedAt.getTime() + 72 * 60 * 60 * 1000 - Date.now()) / (60 * 60 * 1000)) : null;
-      txt += `${statusEmoji} \`${t.accountEmail}\` — $${fmt(t.amount)}`;
-      if (timeLeft !== null && timeLeft > 0) txt += ` (${timeLeft}س)`;
-      txt += `\n`;
+      const statusText = t.status === "approved" ? "مقبول" : t.status === "rejected" ? "مرفوض" : "قيد المراجعة";
+      txt += `${statusEmoji} \`${t.accountEmail}\` — $${fmt(t.amount)} — ${statusText}\n`;
     }
     bot.sendMessage(chatId, txt, { parse_mode: "Markdown", ...MAIN_MENU });
     return;
   }
 
-  // ─── الرصيد ───────────────────────────────────────────────────────────────────
+  // ─── الرصيد ───────────────────────────────────────────────────────────────
   if (text === "💰 الرصيد") {
     const approved = await Task.countDocuments({ userId: user.telegramId, status: "approved" });
     const pending = await Task.countDocuments({ userId: user.telegramId, status: "pending" });
@@ -397,7 +409,7 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // ─── الإحالات ─────────────────────────────────────────────────────────────────
+  // ─── الإحالات ─────────────────────────────────────────────────────────────
   if (text === "👥 الإحالات الخاصة بي") {
     const botInfo = await bot.getMe();
     const link = `https://t.me/${botInfo.username}?start=${user.referralCode}`;
@@ -410,7 +422,7 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // ─── الإعدادات ────────────────────────────────────────────────────────────────
+  // ─── الإعدادات ────────────────────────────────────────────────────────────
   if (text === "⚙️ الإعدادات") {
     bot.sendMessage(chatId,
       `⚙️ *الإعدادات*\n\n` +
@@ -423,7 +435,7 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // ─── المساعدة ─────────────────────────────────────────────────────────────────
+  // ─── المساعدة ─────────────────────────────────────────────────────────────
   if (text === "💬 مساعدة") {
     bot.sendMessage(chatId,
       `💬 *المساعدة*\n\n` +
@@ -443,7 +455,7 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  // ─── السحب ───────────────────────────────────────────────────────────────────
+  // ─── السحب ────────────────────────────────────────────────────────────────
   if (user.state === "awaiting_withdraw_amount") {
     const amount = parseFloat(text.trim());
     if (isNaN(amount) || amount < 0.20) {
