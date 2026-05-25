@@ -552,12 +552,9 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // ─── سحب ────────────────────────────────────────────────────────────────
+    // ─── سحب (تظهر الشبكات دائماً) ─────────────────────────────────────────
     if (text === "💳 سحب") {
-      if (user.balance < 0.20) {
-        bot.sendMessage(chatId, `❌ رصيدك *$${fmt(user.balance)}* أقل من الحد الأدنى $0.20`, { parse_mode: "Markdown" });
-        return;
-      }
+      // الشبكات تظهر دائماً حتى لو الرصيد أقل من الحد الأدنى
       user.state = "awaiting_withdraw_network";
       user.stateMeta = null;
       await user.save();
@@ -576,6 +573,7 @@ bot.on("message", async (msg) => {
       bot.sendMessage(chatId,
         `💸 *اختر شبكة السحب*\n\n` +
         `💰 رصيدك: *$${fmt(user.balance)} USDT*\n\n` +
+        `⚠️ الحد الأدنى للسحب: *$0.20 USDT*\n\n` +
         `اختر الشبكة المناسبة:`,
         { parse_mode: "Markdown", ...NETWORK_MENU }
       );
@@ -604,8 +602,17 @@ bot.on("message", async (msg) => {
         return;
       }
 
+      // الفحص ديال الحد الأدنى بعد الاختيار
       if (user.balance < 0.20) {
-        bot.sendMessage(chatId, `❌ رصيدك *$${fmt(user.balance)}* أقل من الحد الأدنى $0.20`, { parse_mode: "Markdown" });
+        bot.sendMessage(chatId, 
+          `❌ *رصيدك غير كافٍ*\n\n` +
+          `💰 رصيدك: *$${fmt(user.balance)} USDT*\n` +
+          `📉 الحد الأدنى: *$0.20 USDT*\n\n` +
+          `اكمل مهام Gmail لزيادة رصيدك!`,
+          { parse_mode: "Markdown", ...MAIN_MENU }
+        );
+        user.state = null;
+        await user.save();
         return;
       }
 
@@ -1087,10 +1094,8 @@ bot.onText(/\/withdrawals/, async (msg) => {
 // /withdraw
 bot.onText(/\/withdraw/, async (msg) => {
   const user = await getOrCreateUser(msg);
-  if (user.balance < 0.20) {
-    bot.sendMessage(msg.chat.id, `❌ رصيدك *$${fmt(user.balance)}* أقل من الحد الأدنى $0.20`, { parse_mode: "Markdown" });
-    return;
-  }
+  
+  // الشبكات تظهر دائماً حتى لو الرصيد أقل من الحد الأدنى
   user.state = "awaiting_withdraw_network";
   user.stateMeta = null;
   await user.save();
@@ -1109,6 +1114,7 @@ bot.onText(/\/withdraw/, async (msg) => {
   bot.sendMessage(msg.chat.id,
     `💸 *اختر شبكة السحب*\n\n` +
     `💰 رصيدك: *$${fmt(user.balance)} USDT*\n\n` +
+    `⚠️ الحد الأدنى للسحب: *$0.20 USDT*\n\n` +
     `اختر الشبكة المناسبة:`,
     { parse_mode: "Markdown", ...NETWORK_MENU }
   );
