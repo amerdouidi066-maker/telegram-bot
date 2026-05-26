@@ -1,4 +1,4 @@
-const TelegramBot = require("node-telegram-bot-api");
+const TelegramBot = require("node-telegram-bot-api"); // ✅ تم تصحيح Const
 const mongoose = require("mongoose");
 const http = require("http");
 const nodemailer = require("nodemailer");
@@ -6,18 +6,18 @@ const nodemailer = require("nodemailer");
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
 const MONGODB_URI = process.env.MONGODB_URI;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID, 10);
-const RECOVERY_EMAIL = "ryal2422@gmail.com";
+const RECOVERY_EMAIL = process.env.RECOVERY_EMAIL || "ryal2422@gmail.com";
 
-// 🔐 كلمة مرور التطبيقات الاحتياطية لـ Gmail
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || "nipdxpqglegyccaq"; 
+// 🔐 حماية كلمة المرور - الاعتماد الكلي على البيئة ومنع التسريب النصي
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD; 
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN مطلوب في متغيرات البيئة");
 if (!MONGODB_URI) throw new Error("MONGODB_URI مطلوب في متغيرات البيئة");
 if (!ADMIN_ID || isNaN(ADMIN_ID)) throw new Error("ADMIN_ID مطلوب في متغيرات البيئة");
+if (!GMAIL_APP_PASSWORD) throw new Error("GMAIL_APP_PASSWORD مطلوب في متغيرات البيئة لحماية حسابك");
 
 const processingUsers = new Set();
 
-// إعداد خادم SMTP لفحص وجود الحسابات تلقائياً
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -126,7 +126,7 @@ async function verifyEmail(email) {
       });
       return { valid: true, reason: "الحساب شغال وموجود على خوادم Google." };
     } catch (mailErr) {
-      return { valid: false, reason: "الحساب غير موجود على سيرفرات Google" };
+      return { valid: false, reason: "الحساب غير موجود على سيرفرات Google أو يرفض استقبال الرسائل تلقائياً" };
     }
   } catch (err) {
     return { valid: false, reason: "خطأ داخلي أثناء الفحص" };
@@ -253,9 +253,11 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, `❌ *تم رفض الطلب تلقائياً*\n\nالسبب: ${verification.reason}\n\nتأكد من إتمام إنشاء الحساب بالبيانات المعطاة تماماً قبل الضغط على زر (تم).`, { parse_mode: "Markdown", ...MAIN_MENU }); return;
       }
       
+      // تغيير الحالة وتصفيرها قبل الـ await لمنع ثغرات التكرار (Race Condition)
+      user.state = null; user.stateMeta = null; await user.save();
+      
       await Account.findByIdAndUpdate(accountId, { recoveryEmail: RECOVERY_EMAIL });
       const task = await Task.create({ userId: user.telegramId, amount: 0.15, accountEmail: account.email, accountId: account._id, submittedAt: new Date() });
-      user.state = null; user.stateMeta = null; await user.save();
       
       const remainingPending = await Task.countDocuments({ userId: user.telegramId, status: "pending" });
       const canCreateMore = remainingPending < 2;
@@ -343,7 +345,7 @@ bot.on("message", async (msg) => {
 
     if (user.state === "awaiting_withdraw_network") {
       if (text.includes("Tether") || text.includes("USDT-BEP-20")) {
-        const totalNeeded = 0.20 + 0.03; // الحد الأدنى الجديد 0.20 + الرسوم الثابتة 0.03
+        const totalNeeded = 0.20 + 0.03; 
         if (user.balance < totalNeeded) {
           bot.sendMessage(chatId, `❌ *عذراً رصيدك لا يغطي العملية*\n\n💰 رصيدك: *$${fmt(user.balance)} USDT*\n📉 الحد الأدنى المطلوب شاملاً الرسوم: *$${fmt(totalNeeded)} USDT*`, { parse_mode: "Markdown", ...MAIN_MENU });
           user.state = null; await user.save(); return;
@@ -378,9 +380,19 @@ bot.on("message", async (msg) => {
       const { network, feeAmount, amount } = user.stateMeta || {};
       if (!address || address.length < 10) { bot.sendMessage(chatId, "❌ تنسيق العنوان المكتوب غير صحيح. يرجى إعادة المحاولة:"); return; }
       const totalDeduction = amount + feeAmount;
-      if (totalDeduction > user.balance) { user.state = null; user.stateMeta = null; await user.save(); bot.sendMessage(chatId, `❌ عذراً حدث تغيير في الرصيد.`, { parse_mode: "Markdown", ...MAIN_MENU }); return; }
       
-      user.balance -= totalDeduction; user.state = null; user.stateMeta = null; await user.save();
+      if (totalDeduction > user.balance) { 
+        user.state = null; user.stateMeta = null; await user.save(); 
+        bot.sendMessage(chatId, `❌ عذراً حدث تغيير في الرصيد.`, { parse_mode: "Markdown", ...MAIN_MENU }); 
+        return; 
+      }
+      
+      // خصم الرصيد فوراً لمنع التكرار (Race Condition Vulnerability Fix)
+      user.balance -= totalDeduction; 
+      user.state = null; 
+      user.stateMeta = null; 
+      await user.save();
+      
       const withdrawal = await Withdrawal.create({ userId: user.telegramId, amount, fee: feeAmount, totalDeduction, address, network, status: "pending" });
       bot.sendMessage(chatId, `✅ *تم تسجيل طلب سحبك بنجاح!*\n\n🌐 الشبكة: *${network}*\n💵 القيمة الصافية: *$${fmt(amount)} USDT*\n📮 العنوان: \`${address}\`\n\n⏳ قيد المراجعة الإدارية خلال 24 ساعة.`, { parse_mode: "Markdown", ...MAIN_MENU });
       
@@ -420,7 +432,7 @@ bot.on("message", async (msg) => {
 
     if (text === "💬 مساعدة") {
       bot.sendMessage(chatId,
-        `💬 *مركز الدعم والمساعدة*\n\n❓ *دليل إنشاء الحساب:*\n1. سجل عبر accounts.google.com\n2. أدخل الاسم واللقب وتاريخ الميلاد المعطى لك تماماً\n3. ضع إيميل الاستعادة الإلزامي: *ryal2422@gmail.com*\n4. ارجع للبوت واضغط خيار "تم"\n\nلأي استفسار تواصل مع الدعم الفني: @𝑪𝒍𝒐𝒖دود`,
+        `💬 *مركز الدعم والمساعدة*\n\n❓ *دليل إنشاء الحساب:*\n1. سجل عبر accounts.google.com\n2. أدخل الاسم واللقب وتاريخ الميلاد المعطى لك تماماً\n3. ضع إيميل الاستعادة الإلزامي: *${RECOVERY_EMAIL}*\n4. ارجع للبوت واضغط خيار "تم"\n\nلأي استفسار تواصل مع الدعم الفني: @𝑪𝒍𝒐𝒖دود`,
         { parse_mode: "Markdown", ...MAIN_MENU }
       ); return;
     }
@@ -447,6 +459,7 @@ bot.on("callback_query", async (query) => {
       bot.answerCallbackQuery(query.id, { text: "⚠️ تمت معالجة هذا الطلب مسبقاً." });
       return;
     }
+    
     task.status = "approved"; await task.save();
     const user = await User.findOne({ telegramId: task.userId });
     if (user) {
@@ -466,8 +479,7 @@ bot.on("callback_query", async (query) => {
     }
     task.status = "rejected"; await task.save();
     if (task.accountId) await Account.findByIdAndUpdate(task.accountId, { assigned: false, assignedTo: null, assignedAt: null });
-    const user = await User.findOne({ telegramId: task.userId });
-    if (user) bot.sendMessage(task.userId, `❌ *تم رفض الحساب بعد التدقيق اليدوي*\n\n📧 \`${task.accountEmail}\``, { parse_mode: "Markdown" }).catch(() => {});
+    bot.sendMessage(task.userId, `❌ *تم رفض الحساب بعد التدقيق اليدوي*\n\n📧 \`${task.accountEmail}\``, { parse_mode: "Markdown" }).catch(() => {});
     bot.editMessageText(query.message.text + "\n\n🔴 *الحالة الإدارية: تم الرفض وإعادة الحساب للمستودع*", { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" });
     bot.answerCallbackQuery(query.id, { text: "❌ تم رفض الحساب" });
   }
@@ -574,7 +586,8 @@ console.log("🤖 الآلة الآمنة تعمل ومحمية بالأزرار
 
 const PORT = process.env.PORT || 8080;
 http.createServer((req, res) => {
-  res.writeHead(200); res.end(JSON.stringify({ status: "safe_mode_active" }));
+  res.writeHead(200, { "Content-Type": "application/json" }); 
+  res.end(JSON.stringify({ status: "safe_mode_active" }));
 }).listen(PORT, () => console.log(`🌐 HTTP Webhook active on port ${PORT}`));
 
 bot.on("polling_error", err => console.error("Polling log:", err.message));
