@@ -8,11 +8,11 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID, 10);
 const RECOVERY_EMAIL = "ryal2422@gmail.com";
 
-// 🔐 كلمة مرور التطبيقات الاحتياطية
+// 🔐 كلمة مرور التطبيقات الاحتياطية لـ Gmail
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || "nipdxpqglegyccaq"; 
 
-if (!BOT_TOKEN) throw new Error("BOT_TOKEN مطلوب");
-if (!MONGODB_URI) throw new Error("MONGODB_URI مطلوب");
+if (!BOT_TOKEN) throw new Error("BOT_TOKEN مطلوب في متغيرات البيئة");
+if (!MONGODB_URI) throw new Error("MONGODB_URI مطلوب في متغيرات البيئة");
 if (!ADMIN_ID || isNaN(ADMIN_ID)) throw new Error("ADMIN_ID مطلوب في متغيرات البيئة");
 
 const processingUsers = new Set();
@@ -66,7 +66,7 @@ const withdrawSchema = new mongoose.Schema({
   fee: { type: Number, default: 0 },
   totalDeduction: { type: Number, required: true },
   address: { type: String, required: true },
-  network: { type: String, enum: ["LTC", "USDT-BEP20"], default: "USDT-BEP20" },
+  network: { type: String, default: "USDT-BEP20" },
   status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
 }, { timestamps: true });
 
@@ -108,7 +108,6 @@ async function cleanupStaleSessions() {
   }
 }
 
-// دالة التحقق التلقائي
 async function verifyEmail(email) {
   try {
     const emailRegex = /^[a-zA-Z0-9][a-zA-Z0-9.]*[a-zA-Z0-9]@gmail\.com$/;
@@ -270,7 +269,6 @@ bot.on("message", async (msg) => {
         { parse_mode: "Markdown", ...MAIN_MENU }
       );
 
-      // إشعار الأدمن بالأزرار التفاعلية المباشرة
       bot.sendMessage(ADMIN_ID,
         `📬 *طلب مراجعة Gmail جديد*\n\n` +
         `👤 المستطلع: ${user.firstName} (\`${user.telegramId}\`)\n` +
@@ -319,7 +317,7 @@ bot.on("message", async (msg) => {
       const pendingAmount = await Task.aggregate([{ $match: { userId: user.telegramId, status: "pending" } }, { $group: { _id: null, total: { $sum: "$amount" } } }]);
       const reserved = pendingAmount[0]?.total || 0;
       bot.sendMessage(chatId,
-        `💰 *إحصائيات رصيدك المالي*\n\n━━━━━━━━━━━━━━━━━━\n💵 *الرصيد القابل للسحب:* $${fmt(user.balance)} USDT\n🔒 *المبالغ المحجوزة للمراجعة:* $${fmt(reserved)} USDT\n━━━━━━━━━━━━━━━━━━\n\n✅ حسابات تم قبولها: ${approved}\n⏳ حسابات تنتظر المراجعة: ${pending}\n👥 عدد إحالاتك: ${user.referralCount}\n\n💸 الحد الأدنى لطلب السحب: *$0.20 USDT*`,
+        `💰 *إحصائيات رصيدك المالي*\n\n━━━━━━━━━━━━━━━━━━\n💵 *الرصيد القابل للسحب:* $${fmt(user.balance)} USDT\n🔒 *المبالغ المحجوزة للمراجعة:* $${fmt(reserved)} USDT\n━━━━━━━━━━━━━━━━━━\n\n✅ حسابات تم قبولها: ${approved}\n⏳ حسابات تنتظر المراجعة: ${pending}\n👥 عدد إحالاتك: ${user.referralCount}\n\n💸 الحد الأدنى لطلب السحب: *0.20 USDT*`,
         { parse_mode: "Markdown", ...BALANCE_MENU }
       ); return;
     }
@@ -339,38 +337,45 @@ bot.on("message", async (msg) => {
 
     if (text === "💳 سحب") {
       user.state = "awaiting_withdraw_network"; user.stateMeta = null; await user.save();
-      const NETWORK_MENU = { reply_markup: { keyboard: [["🪙 Litecoin (LTC)"], ["💎 Tether (USDT-BEP20)"], ["🔙 رجوع"]], resize_keyboard: true } };
-      bot.sendMessage(chatId, `💸 *اختر شبكة السحب مع مراعاة الرسوم الأمنية*\n\n💰 رصيدك المتاح: *$${fmt(user.balance)} USDT*\n\n⚠️ الحد الأدنى المسموح به: *$0.20 USDT*\n\nاختر الشبكة:`, { parse_mode: "Markdown", ...NETWORK_MENU }); return;
+      const NETWORK_MENU = { reply_markup: { keyboard: [["💎 Tether (USDT-BEP-20) | 0% +0.03$ | min: 0.20$"]], resize_keyboard: true } };
+      bot.sendMessage(chatId, `💸 *اختر شبكة السحب مع مراعاة الرسوم الأمنية*\n\n💰 رصيدك المتاح: *$${fmt(user.balance)} USDT*\n\n⚠️ الحد الأدنى المسموح به: *0.20 USDT*\n\nاختر الشبكة:`, { parse_mode: "Markdown", ...NETWORK_MENU }); return;
     }
 
     if (user.state === "awaiting_withdraw_network") {
-      let network, fee, feeAmount;
-      if (text.includes("Litecoin") || text.includes("LTC")) { network = "LTC"; fee = 0.02; feeAmount = 0.02; }
-      else if (text.includes("Tether") || text.includes("USDT-BEP20")) { network = "USDT-BEP20"; fee = 0.03; feeAmount = 0.03; }
-      else if (text === "🔙 رجوع") { user.state = null; await user.save(); bot.sendMessage(chatId, `👋 *تمت العودة للقائمة الرئيسية*`, { parse_mode: "Markdown", ...MAIN_MENU }); return; }
-      else { bot.sendMessage(chatId, "❌ الرجاء اختيار شبكة صالحة من القائمة السفلية."); return; }
-      const totalNeeded = 0.20 + feeAmount;
-      if (user.balance < totalNeeded) {
-        bot.sendMessage(chatId, `❌ *عذراً رصيدك لا يغطي العملية*\n\n💰 رصيدك: *$${fmt(user.balance)} USDT*\n📉 الحد الأدنى المطلوب شاملاً الرسوم: *$${fmt(totalNeeded)} USDT*`, { parse_mode: "Markdown", ...MAIN_MENU });
-        user.state = null; await user.save(); return;
+      if (text.includes("Tether") || text.includes("USDT-BEP-20")) {
+        const totalNeeded = 0.20 + 0.03; // الحد الأدنى الجديد 0.20 + الرسوم الثابتة 0.03
+        if (user.balance < totalNeeded) {
+          bot.sendMessage(chatId, `❌ *عذراً رصيدك لا يغطي العملية*\n\n💰 رصيدك: *$${fmt(user.balance)} USDT*\n📉 الحد الأدنى المطلوب شاملاً الرسوم: *$${fmt(totalNeeded)} USDT*`, { parse_mode: "Markdown", ...MAIN_MENU });
+          user.state = null; await user.save(); return;
+        }
+        user.state = "awaiting_withdraw_amount_network"; 
+        user.stateMeta = { network: "USDT-BEP20", fee: 0.03, feeAmount: 0.03 }; 
+        await user.save();
+        bot.sendMessage(chatId, `💸 *طلب سحب عبر شبكة USDT-BEP20*\n\n💰 رصيدك الحالي: *$${fmt(user.balance)} USDT*\n💸 الرسوم الثابتة: *0.03 USDT*\n\nيرجى كتابة المبلغ المراد سحبه كقيمة رقمية (بحد أدنى 0.20):`, { parse_mode: "Markdown" });
+        return;
+      } else if (text === "🔙 رجوع") {
+        user.state = null; await user.save();
+        bot.sendMessage(chatId, `👋 *تمت العودة للقائمة الرئيسية*`, { parse_mode: "Markdown", ...MAIN_MENU });
+        return;
+      } else {
+        bot.sendMessage(chatId, "❌ الرجاء اختيار شبكة صالحة من القائمة السفلية.");
+        return;
       }
-      user.state = "awaiting_withdraw_amount_network"; user.stateMeta = { network, fee, feeAmount }; await user.save();
-      bot.sendMessage(chatId, `💸 *طلب سحب عبر شبكة ${network}*\n\n💰 رصيدك الحالي: *$${fmt(user.balance)} USDT*\n💸 الرسوم الثابتة: *$${fee} USDT*\n\nيرجى كتابة المبلغ المراد سحبه كقيمة رقمية:`, { parse_mode: "Markdown" }); return;
     }
 
     if (user.state === "awaiting_withdraw_amount_network") {
       const amount = parseFloat(text.trim());
-      const { network, fee, feeAmount } = user.stateMeta || {};
-      if (isNaN(amount) || amount < 0.20) { bot.sendMessage(chatId, `❌ القيمة غير صحيحة أو أقل من الحد الأدنى ($0.20).`); return; }
+      const { network, feeAmount } = user.stateMeta || {};
+      if (isNaN(amount) || amount < 0.20) { bot.sendMessage(chatId, `❌ القيمة غير صحيحة أو أقل من الحد الأدنى (0.20).`); return; }
       const totalDeduction = amount + feeAmount;
-      if (totalDeduction > user.balance) { bot.sendMessage(chatId, `❌ تعذر طلب هذا المبلغ. الإجمالي يتجاوز رصيدك الحالي.`); return; }
+      if (totalDeduction > user.balance) { bot.sendMessage(chatId, `❌ تعذر طلب هذا المبلغ. الإجمالي يتجاوز رصيدك الحالي مع الرسوم.`); return; }
       user.state = "awaiting_withdraw_address_network"; user.stateMeta = { ...user.stateMeta, amount }; await user.save();
       bot.sendMessage(chatId, `📮 أدخل عنوان محفظتك لاستلام عملة *(${network})*:`, { parse_mode: "Markdown" }); return;
     }
 
     if (user.state === "awaiting_withdraw_address_network") {
       const address = text.trim();
-      const { network, fee, feeAmount, amount } = user.stateMeta || {};
+      const { network, feeAmount, amount } = user.stateMeta || {};
       if (!address || address.length < 10) { bot.sendMessage(chatId, "❌ تنسيق العنوان المكتوب غير صحيح. يرجى إعادة المحاولة:"); return; }
       const totalDeduction = amount + feeAmount;
       if (totalDeduction > user.balance) { user.state = null; user.stateMeta = null; await user.save(); bot.sendMessage(chatId, `❌ عذراً حدث تغيير في الرصيد.`, { parse_mode: "Markdown", ...MAIN_MENU }); return; }
@@ -379,7 +384,6 @@ bot.on("message", async (msg) => {
       const withdrawal = await Withdrawal.create({ userId: user.telegramId, amount, fee: feeAmount, totalDeduction, address, network, status: "pending" });
       bot.sendMessage(chatId, `✅ *تم تسجيل طلب سحبك بنجاح!*\n\n🌐 الشبكة: *${network}*\n💵 القيمة الصافية: *$${fmt(amount)} USDT*\n📮 العنوان: \`${address}\`\n\n⏳ قيد المراجعة الإدارية خلال 24 ساعة.`, { parse_mode: "Markdown", ...MAIN_MENU });
       
-      // إشعار سحب للأدمن مع أزرار التحكم
       bot.sendMessage(ADMIN_ID,
         `💸 *إشعار بطلب سحب مالي جديد*\n\n` +
         `👤 العضو: ${user.firstName} (\`${user.telegramId}\`)\n` +
@@ -426,7 +430,6 @@ bot.on("message", async (msg) => {
   }
 });
 
-// ⚡ كود معالجة ضغط الأزرار (Inline Keyboards) من قبل الأدمن
 bot.on("callback_query", async (query) => {
   if (query.from.id !== ADMIN_ID) {
     bot.answerCallbackQuery(query.id, { text: "🚫 أنت لست المسؤول عن هذا البوت!", show_alert: true });
@@ -437,7 +440,6 @@ bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const messageId = query.message.message_id;
 
-  // قبول حساب Gmail بنقرة واحدة
   if (data.startsWith("app_task_")) {
     const taskId = data.replace("app_task_", "");
     const task = await Task.findById(taskId).catch(() => null);
@@ -455,7 +457,6 @@ bot.on("callback_query", async (query) => {
     bot.answerCallbackQuery(query.id, { text: "✅ تم قبول الحساب" });
   }
 
-  // رفض حساب Gmail بنقرة واحدة
   if (data.startsWith("rej_task_")) {
     const taskId = data.replace("rej_task_", "");
     const task = await Task.findById(taskId).catch(() => null);
@@ -471,7 +472,6 @@ bot.on("callback_query", async (query) => {
     bot.answerCallbackQuery(query.id, { text: "❌ تم رفض الحساب" });
   }
 
-  // تأكيد تحويل السحب بنقرة واحدة
   if (data.startsWith("app_with_")) {
     const withId = data.replace("app_with_", "");
     const withdrawal = await Withdrawal.findById(withId).catch(() => null);
@@ -485,7 +485,6 @@ bot.on("callback_query", async (query) => {
     bot.answerCallbackQuery(query.id, { text: "✅ تم تأكيد السحب" });
   }
 
-  // رفض السحب بنقرة واحدة
   if (data.startsWith("rej_with_")) {
     const withId = data.replace("rej_with_", "");
     const withdrawal = await Withdrawal.findById(withId).catch(() => null);
