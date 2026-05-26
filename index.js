@@ -1,4 +1,4 @@
-const TelegramBot = require("node-telegram-bot-api"); // ✅ تم تصحيح Const إلى const
+const TelegramBot = require("node-telegram-bot-api"); 
 const mongoose = require("mongoose");
 const http = require("http");
 const nodemailer = require("nodemailer");
@@ -203,6 +203,33 @@ bot.on("message", async (msg) => {
     if (user.banned) { bot.sendMessage(chatId, "🚫 تم حظرك من استخدام البوت."); return; }
     const text = msg.text;
 
+    // 🌟 التعامل مع أزرار لوحة تحكم الإدارة الخاصة بالأدمن فقط
+    if (userId === ADMIN_ID) {
+      if (text === "📋 عرض الحسابات المعلقة") {
+        bot.processUpdate({ message: { chat: msg.chat, from: msg.from, text: "/pending" } });
+        return;
+      } else if (text === "📊 إحصائيات النظام السريعة") {
+        bot.processUpdate({ message: { chat: msg.chat, from: msg.from, text: "/stats" } });
+        return;
+      } else if (text === "💰 طلبات السحب المنتظرة") {
+        const pendingWithdraws = await Withdrawal.find({ status: "pending" });
+        if (!pendingWithdraws.length) {
+          bot.sendMessage(chatId, "🎉 لا توجد طلبات سحب معلقة حالياً.");
+        } else {
+          for (const w of pendingWithdraws) {
+            bot.sendMessage(chatId, `💸 *طلب سحب معلق:*\n\n👤 المستخدم آيدي: \`${w.userId}\`\n🌐 الشبكة: *${w.network}*\n💵 الصافي: $${fmt(w.amount)}\n📮 العنوان: \`${w.address}\``, {
+              parse_mode: "Markdown",
+              reply_markup: { inline_keyboard: [[{ text: "✅ تأكيد التحويل", callback_data: `app_with_${w._id}` }, { text: "❌ رفض وإعادة رصيد", callback_data: `rej_with_${w._id}` }]] }
+            });
+          }
+        }
+        return;
+      } else if (text === "🔙 خروج من الإدارة") {
+        bot.sendMessage(chatId, "👋 تم الخروج من لوحة التحكم والعودة للقائمة العامة.", MAIN_MENU);
+        return;
+      }
+    }
+
     if (text === "➕ أنشئ حساب Gmail جديد") {
       const pendingTasks = await Task.find({ userId: user.telegramId, status: "pending" });
       if (pendingTasks.length >= 2) {
@@ -217,7 +244,7 @@ bot.on("message", async (msg) => {
       const account = await Account.findOneAndUpdate({ assigned: false }, { assigned: true, assignedTo: user.telegramId, assignedAt: new Date() }, { new: true });
       if (!account) { bot.sendMessage(chatId, `❌ *لا توجد حسابات متاحة حالياً*\n\nيرجى المحاولة لاحقاً.`, { parse_mode: "Markdown" }); return; }
       
-      // 🛠️ تصحيح الثغرة: إذا كان الحساب المستدعى قديماً ولا يحتوي على تاريخ ميلاد، نقوم بإنشائه فوراً لمنع ظهور undefined
+      // 🛠️ دمج ذكي لمنع ثغرة التواريخ القديمة الفارغة
       if (!account.birthDate || account.birthDate === "undefined") {
         account.birthDate = generateRandomBirthDate();
         await account.save();
@@ -260,7 +287,6 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, `❌ *تم رفض الطلب تلقائياً*\n\nالسبب: ${verification.reason}\n\nتأكد من إتمام إنشاء الحساب بالبيانات المعطاة تماماً قبل الضغط على زر (تم).`, { parse_mode: "Markdown", ...MAIN_MENU }); return;
       }
       
-      // حماية السباق والتكرار: نقوم بتصفير الحالة قبل معالجة الحفظ والرسائل اللاحقة
       user.state = null; user.stateMeta = null; await user.save();
       
       await Account.findByIdAndUpdate(accountId, { recoveryEmail: RECOVERY_EMAIL });
@@ -379,7 +405,7 @@ bot.on("message", async (msg) => {
       const totalDeduction = amount + feeAmount;
       if (totalDeduction > user.balance) { bot.sendMessage(chatId, `❌ تعذر طلب هذا المبلغ. الإجمالي يتجاوز رصيدك الحالي مع الرسوم.`); return; }
       user.state = "awaiting_withdraw_address_network"; user.stateMeta = { ...user.stateMeta, amount }; await user.save();
-      bot.sendMessage(chatId, `📮 أدخل عنوان محفظتك لاستلام عملة *(${network})*:`, { parse_mode: "Markdown" }); return;
+      bot.sendMessage(chatId, `📮 أدخل عنوان محفظتك لاستلاف عملة *(${network})*:`, { parse_mode: "Markdown" }); return;
     }
 
     if (user.state === "awaiting_withdraw_address_network") {
@@ -389,7 +415,6 @@ bot.on("message", async (msg) => {
       const totalDeduction = amount + feeAmount;
       if (totalDeduction > user.balance) { user.state = null; user.stateMeta = null; await user.save(); bot.sendMessage(chatId, `❌ عذراً حدث تغيير في الرصيد.`, { parse_mode: "Markdown", ...MAIN_MENU }); return; }
       
-      // حماية التكرار: يتم الخصم فوراً وتحديث بيانات المستخدم قبل المتابعة في الـ Async
       user.balance -= totalDeduction; user.state = null; user.stateMeta = null; await user.save();
       const withdrawal = await Withdrawal.create({ userId: user.telegramId, amount, fee: feeAmount, totalDeduction, address, network, status: "pending" });
       bot.sendMessage(chatId, `✅ *تم تسجيل طلب سحبك بنجاح!*\n\n🌐 الشبكة: *${network}*\n💵 القيمة الصافية: *$${fmt(amount)} USDT*\n📮 العنوان: \`${address}\`\n\n⏳ قيد المراجعة الإدارية خلال 24 ساعة.`, { parse_mode: "Markdown", ...MAIN_MENU });
@@ -438,6 +463,95 @@ bot.on("message", async (msg) => {
   } finally {
     processingUsers.delete(userId);
   }
+});
+
+// 🛠️ [أمر إداري]: تشغيل لوحة تحكم الأدمن الشاملة
+bot.onText(/\/admin/, async (msg) => {
+  if (msg.from.id !== ADMIN_ID) return;
+  
+  const [pendingTasks, pendingWithdraws, availableAccounts] = await Promise.all([
+    Task.countDocuments({ status: "pending" }),
+    Withdrawal.countDocuments({ status: "pending" }),
+    Account.countDocuments({ assigned: false })
+  ]);
+
+  bot.sendMessage(msg.chat.id,
+    `⚙️ *لوحة تحكم الإدارة الشاملة*\n\n` +
+    `📦 الحسابات الجاهزة بالمخزن: *${availableAccounts}*\n` +
+    `⏳ حسابات تنتظر المراجعة: *${pendingTasks}*\n` +
+    `💸 طلبات سحب معلقة: *${pendingWithdraws}*`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        keyboard: [
+          ["📋 عرض الحسابات المعلقة", "💰 طلبات السحب المنتظرة"],
+          ["📊 إحصائيات النظام السريعة", "🔙 خروج من الإدارة"]
+        ],
+        resize_keyboard: true
+      }
+    }
+  );
+});
+
+// 🛠️ [أمر إداري]: عرض جميع الحسابات المعلقة حالياً بالتفصيل مع أزرار القبول والرفض
+bot.onText(/\/pending/, async (msg) => {
+  if (msg.from.id !== ADMIN_ID) return;
+  
+  const pendingTasks = await Task.find({ status: "pending" }).sort({ createdAt: 1 });
+  
+  if (!pendingTasks.length) {
+    bot.sendMessage(msg.chat.id, "🎉 *لا توجد أي حسابات معلقة قيد الانتظار حالياً.*", { parse_mode: "Markdown" });
+    return;
+  }
+  
+  bot.sendMessage(msg.chat.id, `⏳ *يوجد حالياً (${pendingTasks.length}) حسابات قيد الانتظار:*`, { parse_mode: "Markdown" });
+  
+  for (const task of pendingTasks) {
+    const user = await User.findOne({ telegramId: task.userId });
+    bot.sendMessage(msg.chat.id,
+      `📧 *حساب معلق:*\n\n` +
+      `👤 المستخدم: ${user ? user.firstName : "غير معروف"} (\`${task.userId}\`)\n` +
+      `✉️ البريد الإلكتروني: \`${task.accountEmail}\`\n` +
+      `📅 تاريخ الإرسال: ${task.createdAt.toLocaleString('ar-EG')}`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "✅ قبول الحساب", callback_data: `app_task_${task._id}` },
+              { text: "❌ رفض وإرجاع", callback_data: `rej_task_${task._id}` }
+            ]
+          ]
+        }
+      }
+    ).catch(() => {});
+  }
+});
+
+// 🛠️ [أمر إداري]: البحث عن حساب معين في النظام ومعرفة حالته ومن صاحبه
+bot.onText(/\/find (.+)/, async (msg, match) => {
+  if (msg.from.id !== ADMIN_ID) return;
+  
+  const email = match[1].trim().toLowerCase();
+  const task = await Task.findOne({ accountEmail: email });
+  
+  if (!task) {
+    bot.sendMessage(msg.chat.id, `❌ لم يتم العثور على أي طلبات أو عمليات فحص مسجلة لهذا الإيميل: \`${email}\``, { parse_mode: "Markdown" });
+    return;
+  }
+  
+  const user = await User.findOne({ telegramId: task.userId });
+  const statusText = task.status === "approved" ? "🟢 مقبول ومضاف" : task.status === "rejected" ? "🔴 مرفوض" : "⏳ قيد الانتظار اليدوي";
+  
+  bot.sendMessage(msg.chat.id,
+    `🔍 *تفاصيل الحساب المعثور عليه:*\n\n` +
+    `📧 البريد: \`${task.accountEmail}\`\n` +
+    `👤 أرسل بواسطة: ${user ? user.firstName : "مستخدم"} (\`${task.userId}\`)\n` +
+    `💵 القيمة: $${task.amount}\n` +
+    `📊 الحالة الحالية: *${statusText}*\n` +
+    `📅 التاريخ: ${task.createdAt.toLocaleString('ar-EG')}`,
+    { parse_mode: "Markdown" }
+  );
 });
 
 bot.on("callback_query", async (query) => {
@@ -536,7 +650,6 @@ function generatePassword() {
   return password;
 }
 
-// 🛠️ تم تصحيح الدالة لتعطي صيغة تاريخ نظيفة ومقبولة دوماً بدون أخطاء (السنة-الشهر-اليوم)
 function generateRandomBirthDate() {
   const start = new Date(1995, 0, 1);
   const end = new Date(2004, 11, 31);
@@ -557,7 +670,7 @@ bot.onText(/\/generate (\d+)/, async (msg, match) => {
     const lastName = getRandomItem(LAST_NAMES);
     const email = generateRandomEmail(firstName, lastName);
     const password = generatePassword();
-    const birthDate = generateRandomBirthDate(); // توليد التاريخ النظيف تلقائياً عند طلب الأدمن
+    const birthDate = generateRandomBirthDate(); 
     try {
       await Account.create({ firstName, lastName, email, password, birthDate, recoveryEmail: RECOVERY_EMAIL });
       added++;
