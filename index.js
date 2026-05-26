@@ -251,7 +251,7 @@ bot.on("message", async (msg) => {
       if (!verification.valid) {
         await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null, assignedAt: null });
         user.state = null; user.stateMeta = null; await user.save();
-        bot.sendMessage(chatId, `❌ *تم رفض الطلب تلقائياً*\n\nالسبب: ${verification.reason}\n\nتأكد من إتمام إنشاء الحساب بالبيانات المعطاة تماماً قبل الضنة على زر (تم).`, { parse_mode: "Markdown", ...MAIN_MENU }); return;
+        bot.sendMessage(chatId, `❌ *تم رفض الطلب تلقائياً*\n\nالسبب: ${verification.reason}\n\nتأكد من إتمام إنشاء الحساب بالبيانات المعطاة تماماً قبل الضغط على زر (تم).`, { parse_mode: "Markdown", ...MAIN_MENU }); return;
       }
       
       await Account.findByIdAndUpdate(accountId, { recoveryEmail: RECOVERY_EMAIL });
@@ -339,14 +339,14 @@ bot.on("message", async (msg) => {
 
     if (text === "💳 سحب") {
       user.state = "awaiting_withdraw_network"; user.stateMeta = null; await user.save();
-      const NETWORK_MENU = { reply_markup: { keyboard: [["🪙 Litecoin (LTC) | 0% +0.02$ | min: 0.20$"], ["💎 Tether (USDT-BE-20) | 0% +0.03$ | min: 0.20$"], ["🔙 رجوع"]], resize_keyboard: true } };
+      const NETWORK_MENU = { reply_markup: { keyboard: [["🪙 Litecoin (LTC)"], ["💎 Tether (USDT-BEP20)"], ["🔙 رجوع"]], resize_keyboard: true } };
       bot.sendMessage(chatId, `💸 *اختر شبكة السحب مع مراعاة الرسوم الأمنية*\n\n💰 رصيدك المتاح: *$${fmt(user.balance)} USDT*\n\n⚠️ الحد الأدنى المسموح به: *$0.20 USDT*\n\nاختر الشبكة:`, { parse_mode: "Markdown", ...NETWORK_MENU }); return;
     }
 
     if (user.state === "awaiting_withdraw_network") {
       let network, fee, feeAmount;
-      if (text.includes("Litecoin")) { network = "LTC"; fee = 0.02; feeAmount = 0.02; }
-      else if (text.includes("Tether") || text.includes("USDT-BE-20")) { network = "USDT-BE20"; fee = 0.03; feeAmount = 0.03; }
+      if (text.includes("Litecoin") || text.includes("LTC")) { network = "LTC"; fee = 0.02; feeAmount = 0.02; }
+      else if (text.includes("Tether") || text.includes("USDT-BEP20")) { network = "USDT-BEP20"; fee = 0.03; feeAmount = 0.03; }
       else if (text === "🔙 رجوع") { user.state = null; await user.save(); bot.sendMessage(chatId, `👋 *تمت العودة للقائمة الرئيسية*`, { parse_mode: "Markdown", ...MAIN_MENU }); return; }
       else { bot.sendMessage(chatId, "❌ الرجاء اختيار شبكة صالحة من القائمة السفلية."); return; }
       const totalNeeded = 0.20 + feeAmount;
