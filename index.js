@@ -1,4 +1,4 @@
-const TelegramBot = require("node-telegram-bot-api"); // ✅ تم تصحيح Const
+const TelegramBot = require("node-telegram-bot-api"); // ✅ تم تصحيح Const إلى const
 const mongoose = require("mongoose");
 const http = require("http");
 const nodemailer = require("nodemailer");
@@ -8,13 +8,13 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID, 10);
 const RECOVERY_EMAIL = process.env.RECOVERY_EMAIL || "ryal2422@gmail.com";
 
-// 🔐 حماية كلمة المرور - الاعتماد الكلي على البيئة ومنع التسريب النصي
+// 🔐 حماية أمنية: منع تسريب كلمة المرور والاعتماد كلياً على متغيرات البيئة
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD; 
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN مطلوب في متغيرات البيئة");
 if (!MONGODB_URI) throw new Error("MONGODB_URI مطلوب في متغيرات البيئة");
 if (!ADMIN_ID || isNaN(ADMIN_ID)) throw new Error("ADMIN_ID مطلوب في متغيرات البيئة");
-if (!GMAIL_APP_PASSWORD) throw new Error("GMAIL_APP_PASSWORD مطلوب في متغيرات البيئة لحماية حسابك");
+if (!GMAIL_APP_PASSWORD) throw new Error("GMAIL_APP_PASSWORD مطلوب في متغيرات البيئة");
 
 const processingUsers = new Set();
 
@@ -126,7 +126,7 @@ async function verifyEmail(email) {
       });
       return { valid: true, reason: "الحساب شغال وموجود على خوادم Google." };
     } catch (mailErr) {
-      return { valid: false, reason: "الحساب غير موجود على سيرفرات Google أو يرفض استقبال الرسائل تلقائياً" };
+      return { valid: false, reason: "الحساب غير موجود على سيرفرات Google" };
     }
   } catch (err) {
     return { valid: false, reason: "خطأ داخلي أثناء الفحص" };
@@ -216,6 +216,13 @@ bot.on("message", async (msg) => {
       }
       const account = await Account.findOneAndUpdate({ assigned: false }, { assigned: true, assignedTo: user.telegramId, assignedAt: new Date() }, { new: true });
       if (!account) { bot.sendMessage(chatId, `❌ *لا توجد حسابات متاحة حالياً*\n\nيرجى المحاولة لاحقاً.`, { parse_mode: "Markdown" }); return; }
+      
+      // 🛠️ تصحيح الثغرة: إذا كان الحساب المستدعى قديماً ولا يحتوي على تاريخ ميلاد، نقوم بإنشائه فوراً لمنع ظهور undefined
+      if (!account.birthDate || account.birthDate === "undefined") {
+        account.birthDate = generateRandomBirthDate();
+        await account.save();
+      }
+
       user.state = "awaiting_confirmation"; user.stateMeta = { accountId: account._id.toString() };
       await user.save();
       
@@ -253,7 +260,7 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, `❌ *تم رفض الطلب تلقائياً*\n\nالسبب: ${verification.reason}\n\nتأكد من إتمام إنشاء الحساب بالبيانات المعطاة تماماً قبل الضغط على زر (تم).`, { parse_mode: "Markdown", ...MAIN_MENU }); return;
       }
       
-      // تغيير الحالة وتصفيرها قبل الـ await لمنع ثغرات التكرار (Race Condition)
+      // حماية السباق والتكرار: نقوم بتصفير الحالة قبل معالجة الحفظ والرسائل اللاحقة
       user.state = null; user.stateMeta = null; await user.save();
       
       await Account.findByIdAndUpdate(accountId, { recoveryEmail: RECOVERY_EMAIL });
@@ -380,19 +387,10 @@ bot.on("message", async (msg) => {
       const { network, feeAmount, amount } = user.stateMeta || {};
       if (!address || address.length < 10) { bot.sendMessage(chatId, "❌ تنسيق العنوان المكتوب غير صحيح. يرجى إعادة المحاولة:"); return; }
       const totalDeduction = amount + feeAmount;
+      if (totalDeduction > user.balance) { user.state = null; user.stateMeta = null; await user.save(); bot.sendMessage(chatId, `❌ عذراً حدث تغيير في الرصيد.`, { parse_mode: "Markdown", ...MAIN_MENU }); return; }
       
-      if (totalDeduction > user.balance) { 
-        user.state = null; user.stateMeta = null; await user.save(); 
-        bot.sendMessage(chatId, `❌ عذراً حدث تغيير في الرصيد.`, { parse_mode: "Markdown", ...MAIN_MENU }); 
-        return; 
-      }
-      
-      // خصم الرصيد فوراً لمنع التكرار (Race Condition Vulnerability Fix)
-      user.balance -= totalDeduction; 
-      user.state = null; 
-      user.stateMeta = null; 
-      await user.save();
-      
+      // حماية التكرار: يتم الخصم فوراً وتحديث بيانات المستخدم قبل المتابعة في الـ Async
+      user.balance -= totalDeduction; user.state = null; user.stateMeta = null; await user.save();
       const withdrawal = await Withdrawal.create({ userId: user.telegramId, amount, fee: feeAmount, totalDeduction, address, network, status: "pending" });
       bot.sendMessage(chatId, `✅ *تم تسجيل طلب سحبك بنجاح!*\n\n🌐 الشبكة: *${network}*\n💵 القيمة الصافية: *$${fmt(amount)} USDT*\n📮 العنوان: \`${address}\`\n\n⏳ قيد المراجعة الإدارية خلال 24 ساعة.`, { parse_mode: "Markdown", ...MAIN_MENU });
       
@@ -459,7 +457,6 @@ bot.on("callback_query", async (query) => {
       bot.answerCallbackQuery(query.id, { text: "⚠️ تمت معالجة هذا الطلب مسبقاً." });
       return;
     }
-    
     task.status = "approved"; await task.save();
     const user = await User.findOne({ telegramId: task.userId });
     if (user) {
@@ -479,7 +476,8 @@ bot.on("callback_query", async (query) => {
     }
     task.status = "rejected"; await task.save();
     if (task.accountId) await Account.findByIdAndUpdate(task.accountId, { assigned: false, assignedTo: null, assignedAt: null });
-    bot.sendMessage(task.userId, `❌ *تم رفض الحساب بعد التدقيق اليدوي*\n\n📧 \`${task.accountEmail}\``, { parse_mode: "Markdown" }).catch(() => {});
+    const user = await User.findOne({ telegramId: task.userId });
+    if (user) bot.sendMessage(task.userId, `❌ *تم رفض الحساب بعد التدقيق اليدوي*\n\n📧 \`${task.accountEmail}\``, { parse_mode: "Markdown" }).catch(() => {});
     bot.editMessageText(query.message.text + "\n\n🔴 *الحالة الإدارية: تم الرفض وإعادة الحساب للمستودع*", { chat_id: chatId, message_id: messageId, parse_mode: "Markdown" });
     bot.answerCallbackQuery(query.id, { text: "❌ تم رفض الحساب" });
   }
@@ -538,9 +536,10 @@ function generatePassword() {
   return password;
 }
 
+// 🛠️ تم تصحيح الدالة لتعطي صيغة تاريخ نظيفة ومقبولة دوماً بدون أخطاء (السنة-الشهر-اليوم)
 function generateRandomBirthDate() {
-  const start = new Date(1990, 0, 1);
-  const end = new Date(2007, 11, 31);
+  const start = new Date(1995, 0, 1);
+  const end = new Date(2004, 11, 31);
   const randomDate = new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
   const year = randomDate.getFullYear();
   const month = String(randomDate.getMonth() + 1).padStart(2, '0');
@@ -558,7 +557,7 @@ bot.onText(/\/generate (\d+)/, async (msg, match) => {
     const lastName = getRandomItem(LAST_NAMES);
     const email = generateRandomEmail(firstName, lastName);
     const password = generatePassword();
-    const birthDate = generateRandomBirthDate();
+    const birthDate = generateRandomBirthDate(); // توليد التاريخ النظيف تلقائياً عند طلب الأدمن
     try {
       await Account.create({ firstName, lastName, email, password, birthDate, recoveryEmail: RECOVERY_EMAIL });
       added++;
@@ -586,7 +585,7 @@ console.log("🤖 الآلة الآمنة تعمل ومحمية بالأزرار
 
 const PORT = process.env.PORT || 8080;
 http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "application/json" }); 
+  res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ status: "safe_mode_active" }));
 }).listen(PORT, () => console.log(`🌐 HTTP Webhook active on port ${PORT}`));
 
