@@ -9,25 +9,17 @@ const crypto = require("crypto");
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
 const MONGODB_URI = process.env.MONGODB_URI;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID, 10);
-const RECOVERY_EMAIL = process.env.RECOVERY_EMAIL || "ryal2422@gmail.com";
-const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD; 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN مطلوب في متغيرات البيئة");
 if (!MONGODB_URI) throw new Error("MONGODB_URI مطلوب في متغيرات البيئة");
 if (!ADMIN_ID || isNaN(ADMIN_ID)) throw new Error("ADMIN_ID مطلوب في متغيرات البيئة");
-if (!GMAIL_APP_PASSWORD) throw new Error("GMAIL_APP_PASSWORD مطلوب في متغيرات البيئة");
 if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
   throw new Error("يجب توفير ENCRYPTION_KEY في متغيرات البيئة بطول 64 حرفاً ورقمًا بالضبط (Hex).");
 }
 
 const IV_LENGTH = 16; 
 const processingUsers = new Set();
-
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: { user: RECOVERY_EMAIL, pass: GMAIL_APP_PASSWORD }
-});
 
 // --- مخططات قاعدة البيانات ---
 const userSchema = new mongoose.Schema({
@@ -51,7 +43,6 @@ const accountSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true }, 
   birthDate: { type: String, required: true },
-  recoveryEmail: { type: String, default: RECOVERY_EMAIL },
   assigned: { type: Boolean, default: false },
   assignedTo: { type: Number, default: null },
   assignedAt: { type: Date, default: null },
@@ -155,6 +146,7 @@ async function cleanupStaleSessions() {
   }
 }
 
+// تعديل دالة الفحص التلقائي للإيميل دون التحقق من خادم بريد الاستعادة
 async function verifyEmail(email) {
   try {
     const emailRegex = /^[a-z0-9_](\.?[a-z0-9_]){4,29}@gmail\.com$/i;
@@ -165,22 +157,7 @@ async function verifyEmail(email) {
     const existingTask = await Task.findOne({ accountEmail: email, status: { $in: ["pending", "approved"] } });
     if (existingTask) return { valid: false, reason: "هذا الإيميل مستخدم بالفعل في النظام" };
 
-    const isLinked = await new Promise((resolve) => {
-      transporter.verify((error) => {
-        if (error) {
-          console.error("خطأ اتصال خادم التحقق:", error.message);
-          resolve(false); 
-        } else {
-          resolve(true); 
-        }
-      });
-    });
-
-    if (!isLinked) {
-      return { valid: false, reason: "لم يتم العثور على بريد الاستعادة المعتمد مرتبطاً بهذا الحساب بعد" };
-    }
-
-    return { valid: true, reason: "صيغة الإيميل سليمة وتم تأكيد ارتباط بريد الاستعادة." };
+    return { valid: true, reason: "صيغة الإيميل سليمة وجاهز للتأمين." };
   } catch (err) {
     return { valid: false, reason: "خطأ داخلي أثناء عملية الفحص التلقائي" };
   }
@@ -196,7 +173,6 @@ const BALANCE_MENU = { reply_markup: { keyboard: [["📝 سجل الرصيد", "
 const SETTINGS_MENU = { reply_markup: { keyboard: [["🔐 إعدادات التحقق بخطوتين للبوت"], ["🔙 رجوع"]], resize_keyboard: true } };
 const NETWORK_MENU = { reply_markup: { keyboard: [["💎 Tether (USDT-BEP-20) | 0% +0.03$ | min: 0.20$"], ["🔙 رجوع"]], resize_keyboard: true } };
 
-// --- قائمة لوحة التحكم الشاملة الخاصة بالأدمن فقط ---
 const ADMIN_MENU = {
   reply_markup: {
     keyboard: [
@@ -278,8 +254,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
       `💰 <b>اكسب من إنشاء حسابات Gmail الآمنة!</b>\n\n` +
       `📌 <b>شروط قبول الحسابات الجديدة الإلزامية:</b>\n` +
       `1️⃣ إنشاء الحساب بالبيانات المعطاة لك.\n` +
-      `2️⃣ ربط بريد الاستعادة المعتمد تلقائياً وبنجاح.\n` +
-      `3️⃣ تفعيل التحقق بخطوتين (2FA) لـ Google **وإرسال أحد الرموز الاحتياطية المكون من 8 أرقام.**\n\n` +
+      `2️⃣ تفعيل التحقق بخطوتين (2FA) لـ Google **وإرسال أحد الرموز الاحتياطية المكون من 8 أرقام.**\n\n` +
       `💵 السعر لكل حساب مطابق للشروط: <b>$0.15</b>`,
       { parse_mode: "HTML", ...MAIN_MENU }
     ).catch(() => {});
@@ -353,7 +328,6 @@ bot.on("message", async (msg) => {
         return; 
       }
 
-      // حالات معالجة مدخلات الأدمن الإضافية
       if (user.state === "admin_awaiting_generate_count") {
         if (text === "❌ إلغاء العملية") { user.state = null; await user.save(); bot.sendMessage(chatId, "🛑 تم إلغاء العملية.", ADMIN_MENU).catch(() => {}); return; }
         const count = parseInt(text.trim(), 10);
@@ -367,7 +341,7 @@ bot.on("message", async (msg) => {
             const uniqueSuffix = crypto.randomBytes(3).toString("hex");
             const email = `${fn.toLowerCase()}${ln.toLowerCase()}_${uniqueSuffix}@gmail.com`;
             const plainPassword = "Pass_" + crypto.randomBytes(4).toString("hex");
-            await Account.create({ firstName: fn, lastName: ln, email, password: encrypt(plainPassword), birthDate: "1998-05-12", recoveryEmail: RECOVERY_EMAIL });
+            await Account.create({ firstName: fn, lastName: ln, email, password: encrypt(plainPassword), birthDate: "1998-05-12" });
             success++;
           } catch {}
         }
@@ -467,9 +441,8 @@ bot.on("message", async (msg) => {
         return;
       }
       
-      const backupCodes = text.trim().replace(/\s/g, ""); // إزالة المسافات إن وجدت لتسهيل الفحص
+      const backupCodes = text.trim().replace(/\s/g, ""); 
       
-      // تعديل الفحص البرمجي: التحقق من أن المدخلات تتكون من 8 أرقام تماماً
       if (!/^\d{8}$/.test(backupCodes)) {
         bot.sendMessage(chatId, "⚠️ خطأ! يرجى إرسال **أحد الرموز الاحتياطية المكون من 8 أرقام فقط** بدون حروف أو رموز أخرى لتتم مراجعة حسابك بنجاح:", { reply_markup: { keyboard: [["❓ كيفية التفعيل"], ["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }).catch(() => {});
         return;
@@ -541,8 +514,7 @@ bot.on("message", async (msg) => {
         `👥 اسم العائلة: <code>${escapeHtml(account.lastName)}</code>\n` +
         `📅 تاريخ الميلاد: <code>${escapeHtml(account.birthDate)}</code>\n` +
         `📧 البريد الإلكتروني: <code>${escapeHtml(account.email)}</code>\n` +
-        `🔑 كلمة المرور السحرية: <code>${escapeHtml(decrypt(account.password))}</code>\n` + 
-        `🔗 إيميل الاستعادة الإلزامي المعتمد: <code>${escapeHtml(RECOVERY_EMAIL)}</code>`,
+        `🔑 كلمة المرور السحرية: <code>${escapeHtml(decrypt(account.password))}</code>`,
         { parse_mode: "HTML", ...CONFIRM_MENU }
       ).catch(() => {});
 
@@ -569,7 +541,7 @@ bot.on("message", async (msg) => {
         const msgToDelete = user.stateMeta?.dataMessageId;
         const account = await Account.findById(accountId);
         
-        bot.sendMessage(chatId, `🔍 <b>جاري التحقق الأولي والتلقائي من الحساب والتأكد من ربط بريد الاستعادة بشكل سليم...</b>`, { parse_mode: "HTML" }).catch(() => {});
+        bot.sendMessage(chatId, `🔍 <b>جاري فحص صيغة الحساب والتحقق الأولي التلقائي...</b>`, { parse_mode: "HTML" }).catch(() => {});
         const verification = await verifyEmail(account.email);
         
         if (!verification.valid) {
@@ -585,7 +557,7 @@ bot.on("message", async (msg) => {
         await user.save();
 
         bot.sendMessage(chatId, 
-          `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة المعتمد بنجاح متكامل!</b>\n\n` +
+          `✅ <b>تم فحص صيغة الحساب بنجاح!</b>\n\n` +
           `⚠️ <b>الخطوة التالية الإلزامية لاستحقاق الدفع (تأمين الحساب):</b>\n` +
           `توجه الآن فوراً إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أحد الرموز الاحتياطية المكون من 8 أرقام (Backup Codes)</b> وأرسله هنا في الشات.\n\n` +
           `🛑 <i>بدون إرسال الرمز الاحتياطي لن تتمكن الإدارة من مراجعة حسابك أو دفع الـ $0.15 لك.</i>\n\n` +
@@ -729,7 +701,7 @@ bot.on("message", async (msg) => {
       user.stateMeta = { tempSecret: encryptedSecret }; 
       await user.save();
       
-      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator then send the 6-digit code here to confirm:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
+      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator ثم أرسل الرمز المكون من 6 أرقام لتأكيد العملية:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
     }
 
     if (text === "💬 مساعدة") {
@@ -760,13 +732,11 @@ bot.on("message", async (msg) => {
   }
 });
 
-// --- الدخول السريع والآمن للوحة تحكم الإدارة (للأدمن فقط) ---
 bot.onText(/\/admin/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
   bot.sendMessage(msg.chat.id, `⚙️ <b>مرحباً بك في لوحة تحكم الإدارة الشاملة</b>\n\nاختر أحد الأوامر والوظائف من القائمة أدناه لإدارة البوت بالكامل وبضغطة واحدة:`, ADMIN_MENU).catch(() => {});
 });
 
-// مراجعة وتنفيذ طلبات الأزرار المباشرة للأدمن (الأزرار الإنلاين تفاعلية)
 bot.on("callback_query", async (query) => {
   if (query.from.id !== ADMIN_ID) return;
   const data = query.data;
@@ -779,9 +749,8 @@ bot.on("callback_query", async (query) => {
       const task = await Task.findOne({ _id: taskId, status: "pending" });
       
       if (task) {
-        // فحص صارم: منع تفعيل أو دفع أي رصيد إذا لم يقم المستخدم بإرسال كود الـ 2FA نهائياً لحماية أموالك
         if (!task.backupCodes || decrypt(task.backupCodes).trim().length < 7) {
-          bot.sendMessage(adminChatId, `⚠️ <b>تنبيه أمني للأدمن:</b> لا يمكن قبول هذا الحساب وضخ الرصيد لأن المستخدم لم يقم بتزويد البوت بالرمز الاحتياطي المطلوب! يجب رفض الطلب.`, { parse_mode: "HTML" }).catch(() => {});
+          bot.sendMessage(adminChatId, `⚠️ <b>تنبيه أمني للأدمن:</b> لا يمكن قبول هذا الحساب لأن المستخدم لم يقم بتزويد البوت بالرمز الاحتياطي المطلوب!`, { parse_mode: "HTML" }).catch(() => {});
           return;
         }
 
@@ -829,7 +798,6 @@ bot.on("callback_query", async (query) => {
   }
 });
 
-// الاتصال الدائم بقاعدة البيانات وتشغيل خادم البوت المباشر
 mongoose.connect(MONGODB_URI)
   .then(() => console.log("MongoDB active and Dashboard ready completely"))
   .catch((err) => console.error(err));
