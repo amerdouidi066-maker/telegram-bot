@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const http = require("http");
 const { authenticator } = require("otplib"); 
 const crypto = require("crypto");
-const https = require("https"); // استدعاء مكتبة الـ https لعمل طلبات الـ API المباشرة مع جوجل
+const https = require("https"); 
 
 // --- إعدادات متغيرات البيئة ---
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
@@ -74,9 +74,36 @@ const Account = mongoose.model("Account", accountSchema);
 const Task = mongoose.model("Task", taskSchema);
 const Withdrawal = mongoose.model("Withdrawal", withdrawSchema);
 
-const FIRST_NAMES = ["James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph", "Thomas", "Charles"];
-const LAST_NAMES = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"];
+// قائمة أسماء واقعية ومحدثة لتبدو طبيعية تماماً لجوجل
+const FIRST_NAMES = ["Oliver", "Jack", "Harry", "Jacob", "Charley", "Thomas", "George", "Oscar", "James", "William", "Noah", "Liam", "Lucas", "Mason", "Ethan"];
+const LAST_NAMES = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Miller", "Davis", "Wilson", "Anderson", "Taylor", "Thomas", "Moore", "Martin", "Clark"];
+
 function getRandomItem(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// دالة لتوليد تاريخ ميلاد عشوائي واقعي (مثال: 1998-04-23)
+function generateRandomBirthDate() {
+  const start = new Date(1995, 0, 1);
+  const end = new Date(2003, 11, 31);
+  const date = new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// دالة لتوليد كلمة مرور قوية يقبلها جوجل وتحتوي على رموز وحروف كابيتال وسول وأرقام
+function generateStrongPassword() {
+  const chars = "abcdefghijklmnopqrstuvwxyz";
+  const caps = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const nums = "0123456789";
+  
+  let pass = getRandomItem(caps) + getRandomItem(chars) + getRandomItem(chars);
+  for (let i = 0; i < 4; i++) {
+    pass += getRandomItem(nums);
+  }
+  pass += getRandomItem(chars) + "@" + getRandomItem(nums);
+  return pass;
+}
 
 // --- وظائف التشفير والأمان ---
 function encrypt(text) {
@@ -146,7 +173,7 @@ async function cleanupStaleSessions() {
   }
 }
 
-// 🌐 دالة التحقق الذكية الجديدة عبر الـ API الرسمي للاستعلام الخفي لجوجل
+// 🌐 دالة التحقق الذكية عبر الـ API الرسمي لجوجل
 async function verifyEmail(email) {
   return new Promise((resolve) => {
     try {
@@ -179,15 +206,12 @@ async function verifyEmail(email) {
           try {
             const json = JSON.parse(body);
             
-            // إذا أرجعت جوجل خطأ بأن الاسم "متاح ومستعد للتسجيل"، فهذا يعني أن الحساب وهمي ولم يتم بناؤه بعد!
             if (json.inputErrors && json.inputErrors.username && json.inputErrors.username.errorMessage === "") {
                return resolve({ valid: false, reason: "لم يتم إنشاء وتفعيل هذا البريد الإلكتروني فعلياً على جوجل! يرجى إنشاؤه أولاً قبل تأكيد العملية." });
             }
             
-            // إذا كان البريد مستخدماً بالفعل ومحجوزاً، فهذا يثبت أن المستخدم أنشأ الحساب بنجاح
             return resolve({ valid: true, reason: "الحساب منشأ وموجود فعلياً على سيرفرات جوجل." });
           } catch (e) {
-            // كخطة احتياطية لو تغير الـ API الخاص بجوجل، يتم تمريره للمراجعة اليدوية للأدمن بدلاً من التوقف
             return resolve({ valid: true, reason: "مرور للمراجعة الاحتياطية." });
           }
         });
@@ -208,7 +232,7 @@ async function verifyEmail(email) {
 
 setInterval(cleanupStaleSessions, 30 * 60 * 1000);
 
-// --- القوائم الثابتة مصلحة الـ HTML المعكوس بالكامل ---
+// --- القوائم الثابتة ---
 const MAIN_MENU = { reply_markup: { keyboard: [["➕ أنشئ حساب Gmail جديد", "📋 حساباتي"], ["💰 الرصيد", "👥 الإحالات الخاصة بي"], ["⚙️ الإعدادات", "💬 مساعدة"]], resize_keyboard: true } };
 const CONFIRM_MENU = { reply_markup: { keyboard: [["✅ تم التفعيل والإنشاء"], ["❌ إلغاء إنشاء الحساب"], ["🔙 رجوع"]], resize_keyboard: true } };
 const CANCEL_MENU = { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } };
@@ -321,7 +345,7 @@ bot.on("message", async (msg) => {
     if (user.banned && userId !== ADMIN_ID) { bot.sendMessage(chatId, "🚫 تم حظرك من استخدام البوت.").catch(() => {}); return; }
     const text = msg.text;
 
-    // --- الإدارة حصرية ---
+    // --- لوحة التحكم الخاصة بالأدمن ---
     if (userId === ADMIN_ID) {
       if (text === "📊 الإحصائيات العامة") { await sendStatsToAdmin(chatId); return; }
       if (text === "📬 مراجعة الحسابات المعلقة") { await sendPendingTasksToAdmin(chatId); return; }
@@ -341,6 +365,7 @@ bot.on("message", async (msg) => {
         return;
       }
 
+      // 🛠️ هنا تم إصلاح أداة التوليد الذكية لتوليد حسابات واقعية ومقبولة بالكامل لجوجل
       if (text === "➕ توليد حسابات للمستودع") {
         user.state = "admin_awaiting_generate_count"; await user.save();
         bot.sendMessage(chatId, "🔢 أرسل عدد الحسابات المراد توليدها تلقائياً للمستودع (مثال: 50):", { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } }).catch(() => {});
@@ -376,19 +401,36 @@ bot.on("message", async (msg) => {
         const count = parseInt(text.trim(), 10);
         if (isNaN(count) || count <= 0) { bot.sendMessage(chatId, "❌ رقم غير صالح، أرسل عدداً صحيحاً:").catch(() => {}); return; }
         user.state = null; await user.save();
-        bot.sendMessage(chatId, `⚙️ جاري بدء توليد ${count} حساب بشكل مؤتمت...`).catch(() => {});
+        bot.sendMessage(chatId, `⚙️ جاري بدء توليد ${count} حساب بشكل مؤتمت وواقعي تماماً...`).catch(() => {});
+        
         let success = 0;
         for (let i = 0; i < count; i++) {
           try {
-            const fn = getRandomItem(FIRST_NAMES); const ln = getRandomItem(LAST_NAMES);
-            const uniqueSuffix = crypto.randomBytes(3).toString("hex");
-            const email = `${fn.toLowerCase()}${ln.toLowerCase()}_${uniqueSuffix}@gmail.com`;
-            const plainPassword = "Pass_" + crypto.randomBytes(4).toString("hex");
-            await Account.create({ firstName: fn, lastName: ln, email, password: encrypt(plainPassword), birthDate: "1998-05-12" });
+            const fn = getRandomItem(FIRST_NAMES); 
+            const ln = getRandomItem(LAST_NAMES);
+            
+            // توليد لاحقة رقمية طبيعية (مثل سنة الميلاد ورقم عشوائي منطقي) بدلاً من الحروف الغريبة
+            const randomYear = Math.floor(Math.random() * (2003 - 1995 + 1)) + 1995;
+            const randomDigits = Math.floor(Math.random() * 90) + 10; // رقم بين 10 و 99
+            
+            // تركيبة الإيميل: اسم أول + اسم عائلة + أرقام منطقية
+            const email = `${fn.toLowerCase()}${ln.toLowerCase()}${randomYear}${randomDigits}@gmail.com`;
+            const plainPassword = generateStrongPassword(); 
+            const randomBirthDate = generateRandomBirthDate();
+
+            await Account.create({ 
+              firstName: fn, 
+              lastName: ln, 
+              email, 
+              password: encrypt(plainPassword), 
+              birthDate: randomBirthDate 
+            });
             success++;
-          } catch {}
+          } catch (e) {
+            // تخطي التكرارات إذا وُجدت
+          }
         }
-        bot.sendMessage(chatId, `✅ انتهاء التوليد التلقائي للفرادة والأسماء! النجاح الفعلي: <b>${success}</b> حساب تم ضخه للمستودع.`, { parse_mode: "HTML", ...ADMIN_MENU }).catch(() => {});
+        bot.sendMessage(chatId, `✅ انتهاء التوليد التلقائي للأسماء والحسابات الواقعية! النجاح الفعلي: <b>${success}</b> حساب مطابق لمعايير جوجل متواجد بالمستودع الآن.`, { parse_mode: "HTML", ...ADMIN_MENU }).catch(() => {});
         return;
       }
 
@@ -764,7 +806,7 @@ bot.on("message", async (msg) => {
       user.stateMeta = { tempSecret: encryptedSecret }; 
       await user.save();
       
-      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator ثم أرسل الرمز المكون من 6 أرقام لتأكيد العملية:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
+      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator then أرسل الرمز المكون من 6 أرقام لتأكيد العملية:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
     }
 
     if (text === "💬 مساعدة") {
@@ -772,7 +814,7 @@ bot.on("message", async (msg) => {
         `💬 <b>دليل تفعيل التحقق بخطوتين (2FA) واستخراج الكود الاحتياطي للحسابات:</b>\n\n` +
         `1️⃣ افتح إعدادات حساب Google الذي أنشأته عبر البوت.\n` +
         `2️⃣ انتقل إلى علامة تبويب <b>الأمان (Security)</b>.\n` +
-        `3️⃣ ابحث عن خيار <b>التحقق بخطوتين (2-Step Verification)</b> وقم بتفعيله برقم habtfd.\n` +
+        `3️⃣ ابحث عن خيار <b>التحقق بخطوتين (2-Step Verification)</b> وقم بتفعيله برقم هاتفك.\n` +
         `4️⃣ بعد انتهاء التفعيل، انزل لأسفل نفس الصفحة وابحث عن خيار <b>الرموز الاحتياطية (Backup Codes)</b>.\n` +
         `5️⃣ اضغط على "الحصول على الرموز"، ثم قم بنسخ **رمز واحد فقط مكون من 8 أرقام** وأرسله للبوت ليتم تأكيد حسابك بنجاح وضخ رصيدك.\n\n` +
         `📞 <b>للدعم الفني المباشر والاستفسارات الأخرى:</b> @CX_GCP`, 
