@@ -4,7 +4,7 @@ const http = require("http");
 const { authenticator } = require("otplib"); 
 const crypto = require("crypto");
 
-// محاولة استدعاء مكتبة الفحص بحذر لضمان عدم انهيار السيرفر على ريلواي إذا لم تُثبت
+// 🟢 فحص استدعاء المكتبة بأمان لتجنب الانهيار (Crash) إذا لم تكن مثبتة
 let emailCheck;
 try {
   emailCheck = require("email-check");
@@ -153,7 +153,7 @@ async function cleanupStaleSessions() {
   }
 }
 
-// دالة فحص الوجود الفعلي للإيميل مع معالجة الأخطاء الذكية لعدم انهيار السيرفر
+// دالة فحص الوجود الفعلي للإيميل وحمايته من التسبب بالانهيار
 async function verifyEmail(email) {
   try {
     const emailRegex = /^[a-z0-9_](\.?[a-z0-9_]){4,29}@gmail\.com$/i;
@@ -180,7 +180,7 @@ async function verifyEmail(email) {
 
 setInterval(cleanupStaleSessions, 30 * 60 * 1000);
 
-// --- القوائم الثابتة للمتصفح والمستخدمين ---
+// --- القوائم الثابتة ---
 const MAIN_MENU = { reply_markup: { keyboard: [["➕ أنشئ حساب Gmail جديد", "📋 حساباتي"], ["💰 الرصيد", "👥 الإحالات الخاصة بي"], ["⚙️ الإعدادات", "💬 مساعدة"]], resize_keyboard: true } };
 const CONFIRM_MENU = { reply_markup: { keyboard: [["✅ تم التفعيل والإنشاء"], ["❌ إلغاء إنشاء الحساب"], ["🔙 رجوع"]], resize_keyboard: true } };
 const CANCEL_MENU = { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } };
@@ -293,7 +293,7 @@ bot.on("message", async (msg) => {
     if (user.banned && userId !== ADMIN_ID) { bot.sendMessage(chatId, "🚫 تم حظرك من استخدام البوت.").catch(() => {}); return; }
     const text = msg.text;
 
-    // --- معالجة شاشات وأوامر الأدمن الحصرية ---
+    // --- الإدارة حصرية ---
     if (userId === ADMIN_ID) {
       if (text === "📊 الإحصائيات العامة") { await sendStatsToAdmin(chatId); return; }
       if (text === "📬 مراجعة الحسابات المعلقة") { await sendPendingTasksToAdmin(chatId); return; }
@@ -400,7 +400,7 @@ bot.on("message", async (msg) => {
       }
     }
 
-    // --- منطق ومعالجة شاشات وحالات المستخدمين ---
+    // --- منطق ومعالجة حالات المستخدمين ---
     if (user.state === "awaiting_2fa_verification") {
       if (text === "❌ إلغاء العملية") {
         user.state = null; user.stateMeta = null; await user.save();
@@ -435,7 +435,7 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // إصلاح كود الـ HTML المعكوس بالكامل هنا لشاشة الأكواد الاحتياطية
+    // 🛠️ تم هنا إصلاح كود الـ HTML المكسور بالكامل لشاشة طريقة استخراج كود الـ 2FA
     if (user.state === "awaiting_gmail_backup_codes") {
       if (text === "❌ إلغاء إنشاء الحساب" || text === "🔙 رجوع") {
         const accountId = user.stateMeta?.accountId;
@@ -538,7 +538,7 @@ bot.on("message", async (msg) => {
 
       if (!account) { 
         await User.findOneAndUpdate({ telegramId: user.telegramId }, { $set: { state: null } });
-        bot.sendMessage(chatId, `❌ لا توجد حسابات متاحة بالمستودع حالياً. فضلاً أبلغ الإدارة لتوليد وضخ دفعة جديدة.`, MAIN_MENU).catch(() => {}); return; 
+        bot.sendMessage(chatId, `❌ لا توجد حسابات متاحة بالمستودع حالياً. فضلاً أبلغ الإدارة لتوليد دفعة جديدة.`, MAIN_MENU).catch(() => {}); return; 
       }
       
       const sentMsg = await bot.sendMessage(chatId,
@@ -574,7 +574,7 @@ bot.on("message", async (msg) => {
         const msgToDelete = user.stateMeta?.dataMessageId;
         const account = await Account.findById(accountId);
         
-        bot.sendMessage(chatId, `🔍 <b>جاري فحص صيغة الحساب والتحقق الأولي التلقائي من وجوده...</b>`, { parse_mode: "HTML" }).catch(() => {});
+        bot.sendMessage(chatId, `🔍 <b>جاري فحص صيغة الحساب والتحقق الأولي التلقائي...</b>`, { parse_mode: "HTML" }).catch(() => {});
         
         const verification = await verifyEmail(account.email);
         
@@ -713,11 +713,11 @@ bot.on("message", async (msg) => {
 
       if (!updatedUser) {
         user.state = null; user.stateMeta = null; await user.save();
-        bot.sendMessage(chatId, "❌ فشل تسجيل الطلب: رصيدك المتاح غير كافٍ لتغطية قيمة السحب بالإضافة إلى رسوم الشبكة السريعة.", MAIN_MENU).catch(() => {}); return;
+        bot.sendMessage(chatId, "❌ فشل تسجيل الطلب: رصيدك المتاح غير كافٍ.", MAIN_MENU).catch(() => {}); return;
       }
 
       await Withdrawal.create({ userId: user.telegramId, amount, fee: feeAmount, totalDeduction: totalRequired, address, network, status: "pending" });
-      bot.sendMessage(chatId, `✅ تم تسجيل طلب سحبك بنجاح للقسم المالي وهو قيد المراجعة والتحويل الفوري!`, MAIN_MENU).catch(() => {});
+      bot.sendMessage(chatId, `✅ تم تسجيل طلب سحبك بنجاح وهو قيد المراجعة والتحويل الفوري!`, MAIN_MENU).catch(() => {});
       return;
     }
 
@@ -756,7 +756,7 @@ bot.on("message", async (msg) => {
 
     if (text === "🔙 رجوع") { 
       user.state = null; user.stateMeta = null; await user.save();
-      bot.sendMessage(chatId, "👋 العودة الذكية للقائمة الرئيسية.", MAIN_MENU).catch(() => {}); return; 
+      bot.sendMessage(chatId, "👋 العودة للقائمة الرئيسية.", MAIN_MENU).catch(() => {}); return; 
     }
 
   } catch (err) {
@@ -828,7 +828,7 @@ bot.on("callback_query", async (query) => {
       }
     }
   } catch (err) {
-    console.error("خطأ في تنفيذ الـ callback بالتفاعلات البينية للأدمن:", err);
+    console.error("خطأ في تنفيذ الـ callback:", err);
   } finally {
     bot.answerCallbackQuery(query.id, { text: "تمت المعالجة بنجاح" }).catch(() => {});
   }
