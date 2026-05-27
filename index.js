@@ -15,7 +15,7 @@ mongoose.connect(mongoUri)
   .then(() => console.log('✅ Connected to MongoDB'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// ✨ تم تحديث هذه الدالة لتوليد بيانات عشوائية ومختلفة تماماً في كل مرة
+// دالة توليد بيانات عشوائية ومختلفة تماماً في كل مرة
 function generateRandomAccountData() {
     const firstNames = ["William", "James", "Oliver", "Lucas", "Benjamin", "Mason", "Ethan", "Alexander"];
     const lastNames = ["Martinez", "Smith", "Johnson", "Brown", "Jones", "Miller", "Davis", "Rodriguez"];
@@ -24,14 +24,9 @@ function generateRandomAccountData() {
     const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
     const fullName = `${firstName} ${lastName}`;
     
-    // توليد جزء فريد للإيميل لمنع التكرار
     const randomHex = Math.random().toString(16).substring(2, 8);
     const email = `${firstName.toLowerCase()}${lastName.toLowerCase()}_${randomHex}@gmail.com`;
-    
-    // كلمة مرور عشوائية قوية
     const password = `Pass_${Math.random().toString(36).substring(2, 10)}`;
-    
-    // بريد الاستعادة الثابت الخاص بك
     const recoveryEmail = "ryal2422@gmail.com"; 
 
     return {
@@ -74,7 +69,7 @@ bot.on('message', async (msg) => {
         const firstName = nameParts[0] || '';
         const lastName = nameParts.slice(1).join(' ') || '';
 
-        // 2. صياغة الرسالة المنفصلة الأسطر وبدون التحقق بخطوتين
+        // 2. صياغة الرسالة المنفصلة الأسطر وبدون نص التحقق بخطوتين (تعديل كامل ومضمون)
         const accountInfoMessage = `
 📦 **بيانات الحساب المطلوب إنشاؤه:**
 
@@ -97,7 +92,6 @@ bot.on('message', async (msg) => {
 async function runInitialCheck(chatId, account) {
     await bot.sendMessage(chatId, "🔍 **جاري التحقق الأولي من الحساب...**", { parse_mode: 'Markdown' });
 
-    // محاكاة تأخير الفحص
     setTimeout(async () => {
         const isEmailValid = checkEmailFormat(account.email); 
 
@@ -105,7 +99,7 @@ async function runInitialCheck(chatId, account) {
             return await bot.sendMessage(chatId, "❌ **فشل الفحص:** صيغة البريد الإلكتروني غير صالحة.", { parse_mode: 'Markdown' });
         }
 
-        // في حال النجاح: يظهر بريد الاستعادة أولاً وتطلب تفعيل التحقق بخطوتين هنا
+        // في حال النجاح: يظهر بريد الاستعادة أولاً وتطلب تفعيل التحقق بخطوتين هنا مع الأزرار التفاعلية
         const successMessage = `
 ✅ **تم التفعيل والإنشاء بنجاح!**
 🔗 **تم ربط بريد الاستعادة الإلزامي:** \`${account.recoveryEmail}\`
