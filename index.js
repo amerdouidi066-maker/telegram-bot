@@ -155,7 +155,7 @@ async function cleanupStaleSessions() {
   }
 }
 
-// --- تصحيح الـ Regex هنا ليدعم الرموز والأرقام والشرطة السفلية تماماً ---
+// التعبير النمطي المحدث والآمن 100%
 async function verifyEmail(email) {
   try {
     const emailRegex = /^[a-z0-9_](\.?[a-z0-9_]){4,29}@gmail\.com$/i;
@@ -172,12 +172,15 @@ async function verifyEmail(email) {
 
 setInterval(cleanupStaleSessions, 30 * 60 * 1000);
 
-// --- القوائم ---
+// --- القوائم الثابتة ---
 const MAIN_MENU = { reply_markup: { keyboard: [["➕ أنشئ حساب Gmail جديد", "📋 حساباتي"], ["💰 الرصيد", "👥 الإحالات الخاصة بي"], ["⚙️ الإعدادات", "💬 مساعدة"]], resize_keyboard: true } };
 const CONFIRM_MENU = { reply_markup: { keyboard: [["✅ تم التفعيل والإنشاء"], ["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } };
 const CANCEL_MENU = { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } };
 const BALANCE_MENU = { reply_markup: { keyboard: [["📝 سجل الرصيد", "💳 سحب"], ["🔙 رجوع"]], resize_keyboard: true } };
 const SETTINGS_MENU = { reply_markup: { keyboard: [["🔐 إعدادات التحقق بخطوتين للبوت"], ["🔙 رجوع"]], resize_keyboard: true } };
+
+// قائمة شبكات السحب المحدثة (تمت إضافة زر الرجوع أسفل الشبكة)
+const NETWORK_MENU = { reply_markup: { keyboard: [["💎 Tether (USDT-BEP-20) | 0% +0.03$ | min: 0.20$"], ["🔙 رجوع"]], resize_keyboard: true } };
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
@@ -311,10 +314,13 @@ bot.on("message", async (msg) => {
     }
 
     if (user.state === "awaiting_2fa_for_withdraw") {
+      if (text === "🔙 رجوع") {
+        user.state = null; user.stateMeta = null; await user.save();
+        bot.sendMessage(chatId, "👋 تم إلغاء العملية والعودة.", MAIN_MENU).catch(() => {}); return;
+      }
       const plainSecret = decrypt(user.twoFASecret);
       if (authenticator.check(text.trim(), plainSecret)) {
         user.state = "awaiting_withdraw_network"; await user.save();
-        const NETWORK_MENU = { reply_markup: { keyboard: [["💎 Tether (USDT-BEP-20) | 0% +0.03$ | min: 0.20$"]], resize_keyboard: true } };
         bot.sendMessage(chatId, `🔓 <b>تم التحقق!</b> اختر شبكة السحب:`, NETWORK_MENU).catch(() => {});
       } else {
         bot.sendMessage(chatId, "❌ كود الأمان غير صحيح. يرجى إعادة المحاولة:", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {});
@@ -412,7 +418,6 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // --- تصحيح وسم الـ HTML المقلوب هنا في رسالة الفحص ---
     if (text === "✅ تم التفعيل والإنشاء") {
       if (user.state !== "awaiting_confirmation") { bot.sendMessage(chatId, "❌ لا يوجد حساب معلق لك.", MAIN_MENU).catch(() => {}); return; }
       const accountId = user.stateMeta?.accountId;
@@ -491,11 +496,14 @@ bot.on("message", async (msg) => {
         return;
       }
       user.state = "awaiting_withdraw_network"; await user.save();
-      const NETWORK_MENU = { reply_markup: { keyboard: [["💎 Tether (USDT-BEP-20) | 0% +0.03$ | min: 0.20$"]], resize_keyboard: true } };
       bot.sendMessage(chatId, `💰 رصيدك: $${fmt(user.balance)} USDT\nاختر الشبكة:`, NETWORK_MENU).catch(() => {}); return;
     }
 
     if (user.state === "awaiting_withdraw_network") {
+      if (text === "🔙 رجوع") {
+        user.state = null; user.stateMeta = null; await user.save();
+        bot.sendMessage(chatId, "👋 تم العودة للقائمة السابقة.", MAIN_MENU).catch(() => {}); return;
+      }
       if (text.includes("USDT-BEP-20")) {
         user.state = "awaiting_withdraw_amount_network"; user.stateMeta = { network: "USDT-BEP20", feeAmount: 0.03 }; await user.save();
         bot.sendMessage(chatId, "💸 أدخل قيمة المبلغ رقمياً (حد أدنى 0.20):", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {});
@@ -506,6 +514,10 @@ bot.on("message", async (msg) => {
     }
 
     if (user.state === "awaiting_withdraw_amount_network") {
+      if (text === "🔙 رجوع") {
+        user.state = "awaiting_withdraw_network"; await user.save();
+        bot.sendMessage(chatId, `اختر شبكة السحب من جديد:`, NETWORK_MENU).catch(() => {}); return;
+      }
       const amount = parseFloat(text.trim());
       if (isNaN(amount) || amount < 0.20) { bot.sendMessage(chatId, "❌ قيمة خاطئة أو أقل من الحد الأدنى.").catch(() => {}); return; }
       
@@ -517,6 +529,10 @@ bot.on("message", async (msg) => {
     }
 
     if (user.state === "awaiting_withdraw_address_network") {
+      if (text === "🔙 رجوع") {
+        user.state = "awaiting_withdraw_amount_network"; await user.save();
+        bot.sendMessage(chatId, "💸 أدخل قيمة المبلغ رقمياً من جديد (حد أدنى 0.20):", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {}); return;
+      }
       const address = text.trim();
       const bep20Regex = /^0x[a-fA-F0-9]{40}$/;
       
@@ -568,7 +584,7 @@ bot.on("message", async (msg) => {
 
     if (text === "🔙 رجوع") { 
       user.state = null; user.stateMeta = null; await user.save();
-      bot.sendMessage(chatId, "👋 العودة للقائمة رئيسية", MAIN_MENU).catch(() => {}); return; 
+      bot.sendMessage(chatId, "👋 العودة للقائمة الرئيسية", MAIN_MENU).catch(() => {}); return; 
     }
 
   } catch (err) {
@@ -661,7 +677,6 @@ bot.on("callback_query", async (query) => {
   }
 });
 
-// أمر تصفير وقسم الحسابات القديمة (متاح للأدمن فقط)
 bot.onText(/\/clearall/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
   try {
