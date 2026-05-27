@@ -74,13 +74,11 @@ const Account = mongoose.model("Account", accountSchema);
 const Task = mongoose.model("Task", taskSchema);
 const Withdrawal = mongoose.model("Withdrawal", withdrawSchema);
 
-// قائمة أسماء واقعية ومحدثة لتبدو طبيعية تماماً لجوجل
 const FIRST_NAMES = ["Oliver", "Jack", "Harry", "Jacob", "Charley", "Thomas", "George", "Oscar", "James", "William", "Noah", "Liam", "Lucas", "Mason", "Ethan"];
 const LAST_NAMES = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Miller", "Davis", "Wilson", "Anderson", "Taylor", "Thomas", "Moore", "Martin", "Clark"];
 
 function getRandomItem(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
-// دالة لتوليد تاريخ ميلاد عشوائي واقعي (مثال: 1998-04-23)
 function generateRandomBirthDate() {
   const start = new Date(1995, 0, 1);
   const end = new Date(2003, 11, 31);
@@ -91,7 +89,6 @@ function generateRandomBirthDate() {
   return `${year}-${month}-${day}`;
 }
 
-// دالة لتوليد كلمة مرور قوية يقبلها جوجل وتحتوي على رموز وحروف كابيتال وسول وأرقام
 function generateStrongPassword() {
   const chars = "abcdefghijklmnopqrstuvwxyz";
   const caps = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -254,6 +251,16 @@ const ADMIN_MENU = {
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
+// ✨ توليد وتحديث أزرار واجهة التليجرام (Menu Button) تلقائياً عند التشغيل
+bot.setMyCommands([
+  { command: "start", description: "🚀 ابدأ استخدام البوت" },
+  { command: "withdraw", description: "💸 طلب سحب" },
+  { command: "admin", description: "⚙️ لوحة الإدارة (للمسؤول فقط)" }
+]).then(() => {
+  console.log("Commands list updated successfully");
+}).catch((err) => console.error("Error setting commands:", err));
+
+
 async function sendPendingTasksToAdmin(chatId) {
   try {
     const pendingTasks = await Task.find({ status: "pending" });
@@ -322,12 +329,18 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
       `📌 <b>شروط قبول الحسابات الجديدة الإلزامية:</b>\n` +
       `1️⃣ إنشاء الحساب بالبيانات المعطاة لك.\n` +
       `2️⃣ تفعيل التحقق بخطوتين (2FA) لـ Google **وإرسال أحد الرموز الاحتياطية المكون من 8 أرقام.**\n\n` +
-      `💵 السعر لكل حساب مطابق للشروط: <b>$0.15</b>`,
+      `💵 السعر لكل حساب مطابق للشروط: <b>$0.17</b>`,
       { parse_mode: "HTML", ...MAIN_MENU }
     ).catch(() => {});
   } catch (err) {
     console.error(err);
   }
+});
+
+// 🔒 حماية وتأمين أمر الأدمن لمنع المستخدمين العاديين من الدخول له
+bot.onText(/\/admin/, async (msg) => {
+  if (msg.from.id !== ADMIN_ID) return; // جدار الحماية: تجاهل تام لأي شخص غيرك
+  bot.sendMessage(msg.chat.id, `⚙️ <b>مرحباً بك في لوحة تحكم الإدارة الشاملة</b>\n\nاختر أحد الأوامر والوظائف من القائمة أدناه لإدارة البوت بالكامل وبضغطة واحدة:`, ADMIN_MENU).catch(() => {});
 });
 
 bot.on("message", async (msg) => {
@@ -365,7 +378,6 @@ bot.on("message", async (msg) => {
         return;
       }
 
-      // 🛠️ هنا تم إصلاح أداة التوليد الذكية لتوليد حسابات واقعية ومقبولة بالكامل لجوجل
       if (text === "➕ توليد حسابات للمستودع") {
         user.state = "admin_awaiting_generate_count"; await user.save();
         bot.sendMessage(chatId, "🔢 أرسل عدد الحسابات المراد توليدها تلقائياً للمستودع (مثال: 50):", { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } }).catch(() => {});
@@ -409,11 +421,9 @@ bot.on("message", async (msg) => {
             const fn = getRandomItem(FIRST_NAMES); 
             const ln = getRandomItem(LAST_NAMES);
             
-            // توليد لاحقة رقمية طبيعية (مثل سنة الميلاد ورقم عشوائي منطقي) بدلاً من الحروف الغريبة
             const randomYear = Math.floor(Math.random() * (2003 - 1995 + 1)) + 1995;
-            const randomDigits = Math.floor(Math.random() * 90) + 10; // رقم بين 10 و 99
+            const randomDigits = Math.floor(Math.random() * 90) + 10; 
             
-            // تركيبة الإيميل: اسم أول + اسم عائلة + أرقام منطقية
             const email = `${fn.toLowerCase()}${ln.toLowerCase()}${randomYear}${randomDigits}@gmail.com`;
             const plainPassword = generateStrongPassword(); 
             const randomBirthDate = generateRandomBirthDate();
@@ -426,9 +436,7 @@ bot.on("message", async (msg) => {
               birthDate: randomBirthDate 
             });
             success++;
-          } catch (e) {
-            // تخطي التكرارات إذا وُجدت
-          }
+          } catch (e) {}
         }
         bot.sendMessage(chatId, `✅ انتهاء التوليد التلقائي للأسماء والحسابات الواقعية! النجاح الفعلي: <b>${success}</b> حساب مطابق لمعايير جوجل متواجد بالمستودع الآن.`, { parse_mode: "HTML", ...ADMIN_MENU }).catch(() => {});
         return;
@@ -561,7 +569,7 @@ bot.on("message", async (msg) => {
       
       const task = await Task.create({
         userId: user.telegramId,
-        amount: 0.15,
+        amount: 0.17, 
         accountEmail: account.email,
         accountId: account._id,
         backupCodes: encrypt(backupCodes), 
@@ -586,7 +594,7 @@ bot.on("message", async (msg) => {
     if (text === "➕ أنشئ حساب Gmail جديد") {
       const pendingTasks = await Task.find({ userId: user.telegramId, status: "pending" });
       if (pendingTasks.length >= 2) {
-        bot.sendMessage(chatId, `⚠️ لا يمكنك إنشاء حساب جديد حتى تنتهي مراجعة حساباتك المعلقة أولاً لحماية المخزون.`).catch(() => {}); return;
+        bot.sendMessage(chatId, `⚠️ لا يمكنك إنشاء حساب جديد حتى تنتهي مراجعة حساباتك معلقة أولاً لحماية المخزون.`).catch(() => {}); return;
       }
 
       const updatedUser = await User.findOneAndUpdate(
@@ -665,7 +673,7 @@ bot.on("message", async (msg) => {
           `1️⃣ توجه الآن فوراً إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>.\n` +
           `2️⃣ استخرج <b>أحد الرموز الاحتياطية المكون من 8 أرقام (Backup Codes)</b> وأرسله هنا في الشات.\n` +
           `3️⃣ 🚨 <b>تنبيه هام جداً:</b> يرجى <b>حذف تسجيل دخول الحساب من هاتفك أو متصفحك بالكامل فوراً</b> بعد إرسال الكود ليدخل الحساب في مرحلة المراجعة الرسمية بأمان.\n\n` +
-          `🛑 <i>بدون إرسال الرمز الاحتياطي، أو في حال اكتشاف استمرار فتح الحساب على جهازك أثناء الفحص، فلن تتمكن الإدارة من قبول حسابك أو دفع الـ $0.15 لك.</i>\n\n` +
+          `🛑 <i>بدون إرسال الرمز الاحتياطي، أو في حال اكتشاف استمرار فتح الحساب على جهازك أثناء الفحص، فلن تتمكن الإدارة من قبول حسابك أو دفع الـ $0.17 لك.</i>\n\n` + 
           `💡 <i>إذا لم تكن تعرف طريقة التفعيل، اضغط على زر "❓ كيفية التفعيل" بالأسفل لمعرفة الخطوات بالتفصيل.</i>`, 
           { 
             parse_mode: "HTML", 
@@ -806,7 +814,7 @@ bot.on("message", async (msg) => {
       user.stateMeta = { tempSecret: encryptedSecret }; 
       await user.save();
       
-      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator then أرسل الرمز المكون من 6 أرقام لتأكيد العملية:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
+      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator ثم أرسل الرمز المكون من 6 أرقام لتأكيد العملية:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
     }
 
     if (text === "💬 مساعدة") {
@@ -835,11 +843,6 @@ bot.on("message", async (msg) => {
     clearTimeout(safetyTimeout);
     processingUsers.delete(userId);
   }
-});
-
-bot.onText(/\/admin/, async (msg) => {
-  if (msg.from.id !== ADMIN_ID) return;
-  bot.sendMessage(msg.chat.id, `⚙️ <b>مرحباً بك في لوحة تحكم الإدارة الشاملة</b>\n\nاختر أحد الأوامر والوظائف من القائمة أدناه لإدارة البوت بالكامل وبضغطة واحدة:`, ADMIN_MENU).catch(() => {});
 });
 
 bot.on("callback_query", async (query) => {
