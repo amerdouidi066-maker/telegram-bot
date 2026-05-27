@@ -158,10 +158,11 @@ function fmt(n) { return Number(n).toFixed(2); }
 async function cleanupStaleSessions() {
   try {
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    // التعديل: عند انتهاء الجلسات المعلقة تلقائياً يتم إتلاف الحساب لضمان عدم تكراره
     const stuckUsers = await User.find({ state: "awaiting_confirmation", updatedAt: { $lte: twoHoursAgo } });
     for (const user of stuckUsers) {
       const accountId = user.stateMeta?.accountId;
-      if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null, assignedAt: null });
+      if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true, assignedAt: null });
       user.state = null; user.stateMeta = null;
       await user.save();
     }
@@ -202,11 +203,9 @@ async function verifyEmail(email) {
         res.on("end", () => {
           try {
             const json = JSON.parse(body);
-            
             if (json.inputErrors && json.inputErrors.username && json.inputErrors.username.errorMessage === "") {
                return resolve({ valid: false, reason: "لم يتم إنشاء وتفعيل هذا البريد الإلكتروني فعلياً على جوجل! يرجى إنشاؤه أولاً قبل تأكيد العملية." });
             }
-            
             return resolve({ valid: true, reason: "الحساب منشأ وموجود فعلياً على سيرفرات جوجل." });
           } catch (e) {
             return resolve({ valid: true, reason: "مرور للمراجعة الاحتياطية." });
@@ -251,7 +250,7 @@ const ADMIN_MENU = {
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// ✨ توليد وتحديث أزرار واجهة التليجرام (Menu Button) تلقائياً عند التشغيل
+// تحديث أزرار القائمة تلقائياً عند تشغيل البوت
 bot.setMyCommands([
   { command: "start", description: "🚀 ابدأ استخدام البوت" },
   { command: "withdraw", description: "💸 طلب سحب" },
@@ -310,7 +309,8 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     
     if (user.state) {
       const accountId = user.stateMeta?.accountId;
-      if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null, assignedAt: null });
+      // التعديل: إتلاف الحساب عند إعادة تشغيل البوت أثناء العملية لتغييره بالكامل
+      if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true, assignedAt: null });
       user.state = null; user.stateMeta = null;
     }
     await user.save();
@@ -337,9 +337,8 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   }
 });
 
-// 🔒 حماية وتأمين أمر الأدمن لمنع المستخدمين العاديين من الدخول له
 bot.onText(/\/admin/, async (msg) => {
-  if (msg.from.id !== ADMIN_ID) return; // جدار الحماية: تجاهل تام لأي شخص غيرك
+  if (msg.from.id !== ADMIN_ID) return;
   bot.sendMessage(msg.chat.id, `⚙️ <b>مرحباً بك في لوحة تحكم الإدارة الشاملة</b>\n\nاختر أحد الأوامر والوظائف من القائمة أدناه لإدارة البوت بالكامل وبضغطة واحدة:`, ADMIN_MENU).catch(() => {});
 });
 
@@ -516,9 +515,10 @@ bot.on("message", async (msg) => {
     if (user.state === "awaiting_gmail_backup_codes") {
       if (text === "❌ إلغاء إنشاء الحساب" || text === "🔙 رجوع") {
         const accountId = user.stateMeta?.accountId;
-        if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
+        // تحديث: إتلاف الحساب وتغييره بالكامل لمنع استخدامه مجدداً
+        if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true });
         user.state = null; user.stateMeta = null; await user.save();
-        bot.sendMessage(chatId, "👋 تم إلغاء العملية والعودة للقائمة الرئيسية.", MAIN_MENU).catch(() => {}); return;
+        bot.sendMessage(chatId, "👋 تم إلغاء العملية وتغيير الحساب بنجاح. عدت للقائمة الرئيسية.", MAIN_MENU).catch(() => {}); return;
       }
 
       if (text === "❓ كيفية التفعيل") {
@@ -639,10 +639,11 @@ bot.on("message", async (msg) => {
         const msgToDelete = user.stateMeta?.dataMessageId;
         
         if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
-        if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
+        // تحديث: إتلاف الحساب وتغييره بالكامل لمنع تكراره
+        if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true });
         
         user.state = null; user.stateMeta = null; await user.save();
-        bot.sendMessage(chatId, "👋 تم إلغاء العملية بنجاح والعودة للقائمة الرئيسية.", MAIN_MENU).catch(() => {});
+        bot.sendMessage(chatId, "👋 تم إلغاء العملية وتغيير الحساب بنجاح. عدت للقائمة الرئيسية.", MAIN_MENU).catch(() => {});
         return;
       }
 
@@ -657,7 +658,8 @@ bot.on("message", async (msg) => {
         
         if (!verification.valid) {
           if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
-          await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
+          // تحديث: الحساب الذي يفشل في الفحص التلقائي يُتلف فوراً لتوليد حساب غيره
+          await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true });
           user.state = null; user.stateMeta = null; await user.save();
           bot.sendMessage(chatId, `❌ <b>فشل الفحص:</b> ${escapeHtml(verification.reason)}`, MAIN_MENU).catch(() => {}); return;
         }
@@ -822,7 +824,7 @@ bot.on("message", async (msg) => {
         `💬 <b>دليل تفعيل التحقق بخطوتين (2FA) واستخراج الكود الاحتياطي للحسابات:</b>\n\n` +
         `1️⃣ افتح إعدادات حساب Google الذي أنشأته عبر البوت.\n` +
         `2️⃣ انتقل إلى علامة تبويب <b>الأمان (Security)</b>.\n` +
-        `3️⃣ ابحث عن خيار <b>التحقق بخطوتين (2-Step Verification)</b> وقم بتفعيله برقم هاتفك.\n` +
+        `3️⃣ ابحث عن خيار <b>التحقق بخطوتين (2-Step Verification)</b> وقم بتفعيله برقم habtck.\n` +
         `4️⃣ بعد انتهاء التفعيل، انزل لأسفل نفس الصفحة وابحث عن خيار <b>الرموز الاحتياطية (Backup Codes)</b>.\n` +
         `5️⃣ اضغط على "الحصول على الرموز"، ثم قم بنسخ **رمز واحد فقط مكون من 8 أرقام** وأرسله للبوت ليتم تأكيد حسابك بنجاح وضخ رصيدك.\n\n` +
         `📞 <b>للدعم الفني المباشر والاستفسارات الأخرى:</b> @CX_GCP`, 
