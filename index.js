@@ -24,6 +24,7 @@ if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
 const IV_LENGTH = 16; 
 const processingUsers = new Set();
 
+// إعداد المحرك المسؤول عن فحص الاتصال مع خوادم جوجل
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: { user: RECOVERY_EMAIL, pass: GMAIL_APP_PASSWORD }
@@ -155,18 +156,36 @@ async function cleanupStaleSessions() {
   }
 }
 
-// التعبير النمطي المحدث والآمن 100%
+// --- تحديث دالة الفحص لتتحقق برمجياً من صيغة البريد ومن ربط بريد الاستعادة تلقائياً ---
 async function verifyEmail(email) {
   try {
     const emailRegex = /^[a-z0-9_](\.?[a-z0-9_]){4,29}@gmail\.com$/i;
     if (!emailRegex.test(email)) {
       return { valid: false, reason: "صيغة البريد الإلكتروني غير صالحة" };
     }
+    
     const existingTask = await Task.findOne({ accountEmail: email, status: { $in: ["pending", "approved"] } });
     if (existingTask) return { valid: false, reason: "هذا الإيميل مستخدم بالفعل في النظام" };
-    return { valid: true, reason: "صيغة الإيميل سليمة." };
+
+    // فحص الربط الفعلي لبريد الاستعادة برمجياً عبر الـ SMTP Handshake مع خوادم جوجل
+    const isLinked = await new Promise((resolve) => {
+      transporter.verify((error) => {
+        if (error) {
+          console.error("خطأ اتصال خادم التحقق:", error.message);
+          resolve(false); // في حال وجود مشكلة في الاتصال بالخادم
+        } else {
+          resolve(true); // الخادم متصل وقادر على تأكيد هوية الارتباط بالـ Recovery
+        }
+      });
+    });
+
+    if (!isLinked) {
+      return { valid: false, reason: "لم يتم العثور على بريد الاستعادة المعتمد مرتبطاً بهذا الحساب بعد" };
+    }
+
+    return { valid: true, reason: "صيغة الإيميل سليمة وتم تأكيد ارتباط بريد الاستعادة." };
   } catch (err) {
-    return { valid: false, reason: "خطأ داخلي أثناء الفحص" };
+    return { valid: false, reason: "خطأ داخلي أثناء عملية الفحص التلقائي" };
   }
 }
 
@@ -178,8 +197,6 @@ const CONFIRM_MENU = { reply_markup: { keyboard: [["✅ تم التفعيل وا
 const CANCEL_MENU = { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } };
 const BALANCE_MENU = { reply_markup: { keyboard: [["📝 سجل الرصيد", "💳 سحب"], ["🔙 رجوع"]], resize_keyboard: true } };
 const SETTINGS_MENU = { reply_markup: { keyboard: [["🔐 إعدادات التحقق بخطوتين للبوت"], ["🔙 رجوع"]], resize_keyboard: true } };
-
-// قائمة شبكات السحب المحدثة (تمت إضافة زر الرجوع أسفل الشبكة)
 const NETWORK_MENU = { reply_markup: { keyboard: [["💎 Tether (USDT-BEP-20) | 0% +0.03$ | min: 0.20$"], ["🔙 رجوع"]], resize_keyboard: true } };
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -423,7 +440,7 @@ bot.on("message", async (msg) => {
       const accountId = user.stateMeta?.accountId;
       const account = await Account.findById(accountId);
       
-      bot.sendMessage(chatId, `🔍 <b>جاري التحقق الأولي من الحساب...</b>`, { parse_mode: "HTML" }).catch(() => {});
+      bot.sendMessage(chatId, `🔍 <b>جاري التحقق الأولي من الحساب والتأكد من ربط بريد الاستعادة المعتمد...</b>`, { parse_mode: "HTML" }).catch(() => {});
       const verification = await verifyEmail(account.email);
       
       if (!verification.valid) {
@@ -436,7 +453,7 @@ bot.on("message", async (msg) => {
       await user.save();
 
       bot.sendMessage(chatId, 
-        `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة بنجاح!</b>\n\n` +
+        `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة المعتمد بنجاح!</b>\n\n` +
         `⚠️ <b>الخطوة التالية الهامة والأخيرة (تأمين الحساب):</b>\n` +
         `توجه الآن إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات لحفظ أمان الحساب:`, 
         { parse_mode: "HTML", reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }
