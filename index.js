@@ -87,7 +87,7 @@ const FIRST_NAMES = ["James", "John", "Robert", "Michael", "William", "David", "
 const LAST_NAMES = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"];
 function getRandomItem(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
-// --- وظائف التشفير ---
+// --- وظائف التشفير والأمان ---
 function encrypt(text) {
   if (!text) return "";
   const iv = crypto.randomBytes(IV_LENGTH);
@@ -188,7 +188,7 @@ async function verifyEmail(email) {
 
 setInterval(cleanupStaleSessions, 30 * 60 * 1000);
 
-// --- القوائم الثابتة للمستخدمين ---
+// --- القوائم الثابتة للمتصفح والمستخدمين ---
 const MAIN_MENU = { reply_markup: { keyboard: [["➕ أنشئ حساب Gmail جديد", "📋 حساباتي"], ["💰 الرصيد", "👥 الإحالات الخاصة بي"], ["⚙️ الإعدادات", "💬 مساعدة"]], resize_keyboard: true } };
 const CONFIRM_MENU = { reply_markup: { keyboard: [["✅ تم التفعيل والإنشاء"], ["❌ إلغاء إنشاء الحساب"], ["🔙 رجوع"]], resize_keyboard: true } };
 const CANCEL_MENU = { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } };
@@ -196,7 +196,7 @@ const BALANCE_MENU = { reply_markup: { keyboard: [["📝 سجل الرصيد", "
 const SETTINGS_MENU = { reply_markup: { keyboard: [["🔐 إعدادات التحقق بخطوتين للبوت"], ["🔙 رجوع"]], resize_keyboard: true } };
 const NETWORK_MENU = { reply_markup: { keyboard: [["💎 Tether (USDT-BEP-20) | 0% +0.03$ | min: 0.20$"], ["🔙 رجوع"]], resize_keyboard: true } };
 
-// --- قائمة التحكم الخاصة بالأدمن بالكامل ---
+// --- قائمة لوحة التحكم الشاملة الخاصة بالأدمن فقط ---
 const ADMIN_MENU = {
   reply_markup: {
     keyboard: [
@@ -353,7 +353,7 @@ bot.on("message", async (msg) => {
         return; 
       }
 
-      // حالات معالجة مدخلات الأدمن
+      // حالات معالجة مدخلات الأدمن الإضافية
       if (user.state === "admin_awaiting_generate_count") {
         if (text === "❌ إلغاء العملية") { user.state = null; await user.save(); bot.sendMessage(chatId, "🛑 تم إلغاء العملية.", ADMIN_MENU).catch(() => {}); return; }
         const count = parseInt(text.trim(), 10);
@@ -411,7 +411,7 @@ bot.on("message", async (msg) => {
       }
     }
 
-    // --- منطق معالجة شاشات المستخدمين العامين ---
+    // --- منطق ومعالجة شاشات وحالات المستخدمين ---
     if (user.state === "awaiting_2fa_verification") {
       if (text === "❌ إلغاء العملية") {
         user.state = null; user.stateMeta = null; await user.save();
@@ -453,10 +453,24 @@ bot.on("message", async (msg) => {
         user.state = null; user.stateMeta = null; await user.save();
         bot.sendMessage(chatId, "🚫 تم إلغاء العملية.", MAIN_MENU).catch(() => {}); return;
       }
+
+      // عرض الدليل التعليمي الفوري إذا كان المستخدم مرتبكاً ولا يعرف الطريقة
+      if (text === "❓ كيفية التفعيل") {
+        bot.sendMessage(chatId, 
+          `📱 <b>طريقة استخراج أكواد 2FA لـ Gmail:</b>\n\n` +
+          `1️⃣ افتح حساب Gmail الجديد الخاص بك.\n` +
+          `2️⃣ اذهب لإعدادات الحساب ➡️ <b>الأمان (Security)</b>.\n` +
+          `3️⃣ قم بتفعيل <b>التحقق بخطوتين (2-Step Verification)</b> برقم هاتفك.\n` +
+          `4️⃣ بعد التفعيل، انقر على خيار <b>الرموز الاحتياطية (Backup Codes)</b>.\n` +
+          `5️⃣ قم بإنشاء الرموز، وانسخ الأكواد الـ 8 كاملة وأرسلها هنا في رسالة واحدة متصلة لتأكيد المراجعة.`,
+          { reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }
+        ).catch(() => {});
+        return;
+      }
       
       const backupCodes = text.trim();
       if (backupCodes.length < 8) {
-        bot.sendMessage(chatId, "⚠️ صيغة الأكواد تبدو غير صحيحة. يرجى إرسال الرموز الاحتياطية بشكل صحيح:", { reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }).catch(() => {});
+        bot.sendMessage(chatId, "⚠️ صيغة الأكواد تبدو غير صحيحة أو غير كاملة. يرجى إرسال الرموز الاحتياطية الـ 8 بشكل صحيح:", { reply_markup: { keyboard: [["❓ كيفية التفعيل"], ["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }).catch(() => {});
         return;
       }
       
@@ -478,13 +492,13 @@ bot.on("message", async (msg) => {
         submittedAt: new Date()
       });
       
-      bot.sendMessage(chatId, `✅ <b>تم استلام الأكواد وإرسال الحساب للمراجعة!</b>`, MAIN_MENU).catch(() => {});
+      bot.sendMessage(chatId, `✅ <b>تم استلام الأكواد بنجاح وإرسال الحساب للمراجعة الإدارية والمالية!</b>`, MAIN_MENU).catch(() => {});
       bot.sendMessage(ADMIN_ID,
-        `📬 <b>طلب مراجعة حساب Gmail (محمي بـ 2FA)</b>\n\n` +
+        `📬 <b>طلب مراجعة حساب Gmail جديد (محمي بـ 2FA)</b>\n\n` +
         `👤 المستخدم: ${escapeHtml(user.firstName)} (<code>${user.telegramId}</code>)\n` +
         `📧 البريد: <code>${escapeHtml(account.email)}</code>\n` +
         `🔑 الباسورد: <code>${escapeHtml(decrypt(account.password))}</code>\n` + 
-        `🚨 <b>أكواد النسخ الاحتياطي:</b>\n<code>${escapeHtml(backupCodes)}</code>`,
+        `🚨 <b>أكواد النسخ الاحتياطي المرسلة:</b>\n<code>${escapeHtml(backupCodes)}</code>`,
         {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [[{ text: "✅ قبول وضخ رصيد", callback_data: `app_task_${task._id}` }, { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` }]] }
@@ -496,7 +510,7 @@ bot.on("message", async (msg) => {
     if (text === "➕ أنشئ حساب Gmail جديد") {
       const pendingTasks = await Task.find({ userId: user.telegramId, status: "pending" });
       if (pendingTasks.length >= 2) {
-        bot.sendMessage(chatId, `⚠️ لا يمكنك إنشاء حساب جديد حتى تنتهي مراجعة حساباتك المعلقة.`).catch(() => {}); return;
+        bot.sendMessage(chatId, `⚠️ لا يمكنك إنشاء حساب جديد حتى تنتهي مراجعة حساباتك المعلقة أولاً لحماية المخزون.`).catch(() => {}); return;
       }
 
       const updatedUser = await User.findOneAndUpdate(
@@ -517,21 +531,21 @@ bot.on("message", async (msg) => {
 
       if (!account) { 
         await User.findOneAndUpdate({ telegramId: user.telegramId }, { $set: { state: null } });
-        bot.sendMessage(chatId, `❌ لا توجد حسابات متاحة بالمستودع حالياً.`, MAIN_MENU).catch(() => {}); return; 
+        bot.sendMessage(chatId, `❌ لا توجد حسابات متاحة بالمستودع حالياً. فضلاً أبلغ الإدارة لتوليد وضخ دفعة جديدة.`, MAIN_MENU).catch(() => {}); return; 
       }
       
       const sentMsg = await bot.sendMessage(chatId,
         `📧 <b>بيانات الحساب المطلوب إنشاؤه:</b>\n\n` +
-        `👤 الاسم: <code>${escapeHtml(account.firstName)}</code>\n` +
-        `👥 اللقب: <code>${escapeHtml(account.lastName)}</code>\n` +
-        `📅 الميلاد: <code>${escapeHtml(account.birthDate)}</code>\n` +
+        `👤 الاسم الأول: <code>${escapeHtml(account.firstName)}</code>\n` +
+        `👥 اسم العائلة: <code>${escapeHtml(account.lastName)}</code>\n` +
+        `📅 تاريخ الميلاد: <code>${escapeHtml(account.birthDate)}</code>\n` +
         `📧 البريد الإلكتروني: <code>${escapeHtml(account.email)}</code>\n` +
-        `🔑 كلمة المرور: <code>${escapeHtml(decrypt(account.password))}</code>\n` + 
-        `🔗 إيميل الاستعادة الإلزامي: <code>${escapeHtml(RECOVERY_EMAIL)}</code>`,
+        `🔑 كلمة المرور السحرية: <code>${escapeHtml(decrypt(account.password))}</code>\n` + 
+        `🔗 إيميل الاستعادة الإلزامي المعتمد: <code>${escapeHtml(RECOVERY_EMAIL)}</code>`,
         { parse_mode: "HTML", ...CONFIRM_MENU }
       ).catch(() => {});
 
-      // تخزين آيدي رسالة البيانات لمسحها لاحقاً لحماية البيانات
+      // الاحتفاظ بـ dataMessageId لحذف الرسالة وحماية خصوصية بيانات الحساب لاحقاً
       updatedUser.stateMeta = { accountId: account._id.toString(), dataMessageId: sentMsg.message_id };
       await updatedUser.save();
       return;
@@ -546,7 +560,7 @@ bot.on("message", async (msg) => {
         if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
         
         user.state = null; user.stateMeta = null; await user.save();
-        bot.sendMessage(chatId, "👋 تم إلغاء العملية والعودة للقائمة الرئيسية.", MAIN_MENU).catch(() => {});
+        bot.sendMessage(chatId, "👋 تم إلغاء العملية بنجاح والعودة للقائمة الرئيسية الحرة.", MAIN_MENU).catch(() => {});
         return;
       }
 
@@ -555,27 +569,38 @@ bot.on("message", async (msg) => {
         const msgToDelete = user.stateMeta?.dataMessageId;
         const account = await Account.findById(accountId);
         
-        bot.sendMessage(chatId, `🔍 <b>جاري التحقق الأولي من الحساب والتأكد من ربط بريد الاستعادة المعتمد...</b>`, { parse_mode: "HTML" }).catch(() => {});
+        bot.sendMessage(chatId, `🔍 <b>جاري التحقق الأولي والتلقائي من الحساب والتأكد من ربط بريد الاستعادة بشكل سليم...</b>`, { parse_mode: "HTML" }).catch(() => {});
         const verification = await verifyEmail(account.email);
         
         if (!verification.valid) {
+          // حذف رسالة البيانات لحماية الحساب عند الفشل وإعادة الحساب للمخزن
           if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
           await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
           user.state = null; user.stateMeta = null; await user.save();
-          bot.sendMessage(chatId, `❌ <b>فشل الفحص:</b> ${escapeHtml(verification.reason)}`, MAIN_MENU).catch(() => {}); return;
+          bot.sendMessage(chatId, `❌ <b>فشل الفحص والتحقق:</b> ${escapeHtml(verification.reason)}`, MAIN_MENU).catch(() => {}); return;
         }
         
-        // مسح رسالة الحساب فوراً من شات المستخدم بعد تخطي الفحص بنجاح
+        // التعديل الهام: مسح بيانات الحساب فوراً من شات المستخدم لمنع الاحتفاظ بها بعد الانتقال لخطوة الأكواد الاحتياطية!
         if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
 
         user.state = "awaiting_gmail_backup_codes";
         await user.save();
 
         bot.sendMessage(chatId, 
-          `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة المعتمد بنجاح!</b>\n\n` +
+          `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة المعتمد بنجاح متكامل!</b>\n\n` +
           `⚠️ <b>الخطوة التالية الهامة والأخيرة (تأمين الحساب):</b>\n` +
-          `توجه الآن إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات لحفظ أمان الحساب:`, 
-          { parse_mode: "HTML", reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }
+          `توجه الآن فوراً إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات لحفظ أمان الحساب وتأكيد ملكيته.\n\n` +
+          `💡 <i>إذا لم تكن تعرف طريقة التفعيل واستخراج الرموز، اضغط على زر "❓ كيفية التفعيل" بالأسفل لمعرفة الخطوات بالتفصيل.</i>`, 
+          { 
+            parse_mode: "HTML", 
+            reply_markup: { 
+              keyboard: [
+                ["❓ كيفية التفعيل"],
+                ["❌ إلغاء إنشاء الحساب"]
+              ], 
+              resize_keyboard: true 
+            } 
+          }
         ).catch(() => {});
         return;
       }
@@ -583,8 +608,8 @@ bot.on("message", async (msg) => {
 
     if (text === "📋 حساباتي") {
       const tasks = await Task.find({ userId: user.telegramId }).sort({ createdAt: -1 }).limit(10);
-      if (!tasks.length) { bot.sendMessage(chatId, `📋 لا توجد حسابات مسجلة.`, MAIN_MENU).catch(() => {}); return; }
-      let txt = `📋 <b>حساباتك الأخيرة:</b>\n\n`;
+      if (!tasks.length) { bot.sendMessage(chatId, `📋 لا توجد حسابات مسجلة باسمك في النظام حتى الآن.`, MAIN_MENU).catch(() => {}); return; }
+      let txt = `📋 <b>حساباتك الأخيرة المرسلة (آخر 10):</b>\n\n`;
       for (const t of tasks) {
         const emoji = t.status === "approved" ? "✅" : t.status === "rejected" ? "❌" : "⏳";
         txt += `${emoji} <code>${escapeHtml(t.accountEmail)}</code> — $${fmt(t.amount)}\n`;
@@ -594,16 +619,16 @@ bot.on("message", async (msg) => {
 
     if (text === "💰 الرصيد") {
       const approved = await Task.countDocuments({ userId: user.telegramId, status: "approved" });
-      bot.sendMessage(chatId, `💵 <b>الرصيد القابل للسحب:</b> $${fmt(user.balance)} USDT\n✅ الحسابات المقبولة: ${approved}`, { parse_mode: "HTML", ...BALANCE_MENU }).catch(() => {}); return;
+      bot.sendMessage(chatId, `💵 <b>الرصيد الحالي القابل للسحب الفوري:</b> $${fmt(user.balance)} USDT\n✅ إجمالي الحسابات المقبولة والناجحة: ${approved}`, { parse_mode: "HTML", ...BALANCE_MENU }).catch(() => {}); return;
     }
 
     if (text === "📝 سجل الرصيد") {
       const withdrawals = await Withdrawal.find({ userId: user.telegramId }).sort({ createdAt: -1 }).limit(10);
       if (!withdrawals.length) { bot.sendMessage(chatId, "📝 لا توجد عمليات سحب مسجلة لحسابك حالياً.", BALANCE_MENU).catch(() => {}); return; }
-      let txt = `📝 <b>سجل طلبات السحب الخاصة بك (آخر 10):</b>\n\n`;
+      let txt = `📝 <b>سجل طلبات السحب والمحفظة الخاصة بك:</b>\n\n`;
       for (const w of withdrawals) {
         const emoji = w.status === "approved" ? "✅" : w.status === "rejected" ? "❌" : "⏳";
-        txt += `${emoji} مبلغ: $${fmt(w.amount)} — شبكة: <code>${w.network}</code>\n`;
+        txt += `${emoji} مبلغ: $${fmt(w.amount)} — شبكة السحب: <code>${w.network}</code>\n`;
       }
       bot.sendMessage(chatId, txt, { parse_mode: "HTML", ...BALANCE_MENU }).catch(() => {}); return;
     }
@@ -611,9 +636,9 @@ bot.on("message", async (msg) => {
     if (text === "👥 الإحالات الخاصة بي") {
       const refLink = `https://t.me/${(await bot.getMe()).username}?start=${user.referralCode}`;
       bot.sendMessage(chatId, 
-        `👥 <b>نظام الإحالات الخاص بك</b>\n\n` +
-        `📈 عدد الإحالات النشطة: <b>${user.referralCount}</b> مستخدم\n` +
-        `🔗 رابط الإحالة الفريد الخاص بك:\n<code>${refLink}</code>`, 
+        `👥 <b>نظام الإحالات وشبكة الدعوة الخاصة بك</b>\n\n` +
+        `📈 عدد الإحالات النشطة والمسجلة عبرك: <b>${user.referralCount}</b> مستخدم\n` +
+        `🔗 رابط الإحالة الفريد والخاص بك لدعوة أصدقائك:\n<code>${refLink}</code>`, 
         { parse_mode: "HTML", ...MAIN_MENU }
       ).catch(() => {});
       return;
@@ -622,11 +647,11 @@ bot.on("message", async (msg) => {
     if (text === "💳 سحب") {
       if (user.twoFAEnabled) {
         user.state = "awaiting_2fa_for_withdraw"; await user.save();
-        bot.sendMessage(chatId, "🔐 يرجى إدخل رمز الـ 2FA الخاص بحسابك لتأكيد السحب:", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {});
+        bot.sendMessage(chatId, "🔐 يرجى إدخل رمز الـ 2FA الخاص بحسابك لتأكيد السحب وحماية أمان محفظتك:", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {});
         return;
       }
       user.state = "awaiting_withdraw_network"; await user.save();
-      bot.sendMessage(chatId, `💰 رصيدك: $${fmt(user.balance)} USDT\nاختر الشبكة:`, NETWORK_MENU).catch(() => {}); return;
+      bot.sendMessage(chatId, `💰 رصيدك المتاح الحالي هو: $${fmt(user.balance)} USDT\nاختر شبكة السحب المناسبة لك:`, NETWORK_MENU).catch(() => {}); return;
     }
 
     if (user.state === "awaiting_withdraw_network") {
@@ -636,9 +661,9 @@ bot.on("message", async (msg) => {
       }
       if (text.includes("USDT-BEP-20")) {
         user.state = "awaiting_withdraw_amount_network"; user.stateMeta = { network: "USDT-BEP20", feeAmount: 0.03 }; await user.save();
-        bot.sendMessage(chatId, "💸 أدخل قيمة المبلغ رقمياً (حد أدنى 0.20):", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {});
+        bot.sendMessage(chatId, "💸 أدخل قيمة المبلغ المراد سحبه رقمياً (الحد الأدنى 0.20):", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {});
       } else {
-        user.state = null; await user.save(); bot.sendMessage(chatId, "👋 تم العودة للقائمة", MAIN_MENU).catch(() => {});
+        user.state = null; await user.save(); bot.sendMessage(chatId, "👋 تم العودة للقائمة الرئيسية.", MAIN_MENU).catch(() => {});
       }
       return;
     }
@@ -649,12 +674,12 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, `اختر شبكة السحب من جديد:`, NETWORK_MENU).catch(() => {}); return;
       }
       const amount = parseFloat(text.trim());
-      if (isNaN(amount) || amount < 0.20) { bot.sendMessage(chatId, "❌ قيمة خاطئة أو أقل من الحد الأدنى.").catch(() => {}); return; }
+      if (isNaN(amount) || amount < 0.20) { bot.sendMessage(chatId, "❌ قيمة خاطئة أو أقل من الحد الأدنى المقدر بـ 0.20$").catch(() => {}); return; }
       
       user.state = "awaiting_withdraw_address_network"; 
       user.stateMeta = { ...user.stateMeta, amount }; 
       await user.save();
-      bot.sendMessage(chatId, "📮 أدخل عنوان محفظتك لشبكة BSC (BEP-20):", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {}); 
+      bot.sendMessage(chatId, "📮 أدخل عنوان محفظتك لشبكة BSC (BEP-20) بدقة:", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {}); 
       return;
     }
 
@@ -667,7 +692,7 @@ bot.on("message", async (msg) => {
       const bep20Regex = /^0x[a-fA-F0-9]{40}$/;
       
       if (!bep20Regex.test(address)) {
-        bot.sendMessage(chatId, "❌ العنوان غير صالح! أرسل عنوان محفظة صحيح يبدأ بـ 0x:").catch(() => {}); return;
+        bot.sendMessage(chatId, "❌ العنوان غير صالح! أرسل عنوان محفظة صحيح ومعتمد لشبكة العقود الذكية يبدأ بـ 0x:").catch(() => {}); return;
       }
 
       const { network, feeAmount, amount } = user.stateMeta || {};
@@ -681,22 +706,22 @@ bot.on("message", async (msg) => {
 
       if (!updatedUser) {
         user.state = null; user.stateMeta = null; await user.save();
-        bot.sendMessage(chatId, "❌ فشل تسجيل الطلب: رصيدك الحالي غير كافٍ شامل الرسوم.", MAIN_MENU).catch(() => {}); return;
+        bot.sendMessage(chatId, "❌ فشل تسجيل الطلب: رصيدك المتاح غير كافٍ لتغطية قيمة السحب بالإضافة إلى رسوم الشبكة السريعة.", MAIN_MENU).catch(() => {}); return;
       }
 
       await Withdrawal.create({ userId: user.telegramId, amount, fee: feeAmount, totalDeduction: totalRequired, address, network, status: "pending" });
-      bot.sendMessage(chatId, `✅ تم تسجيل طلب سحبك بنجاح وهو قيد المراجعة!`, MAIN_MENU).catch(() => {});
+      bot.sendMessage(chatId, `✅ تم تسجيل طلب سحبك بنجاح للقسم المالي وهو قيد المراجعة والتحويل الفوري!`, MAIN_MENU).catch(() => {});
       return;
     }
 
     if (text === "⚙️ الإعدادات") {
-      bot.sendMessage(chatId, `⚙️ <b>إعدادات النظام</b>\n\n🔒 التحقق الثنائي للبوت: <b>${user.twoFAEnabled ? "🟢 مفعل" : "🔴 غير مفعل"}</b>`, { parse_mode: "HTML", ...SETTINGS_MENU }).catch(() => {}); return;
+      bot.sendMessage(chatId, `⚙️ <b>إعدادات النظام والحساب بالبوت</b>\n\n🔒 تفعيل التحقق الثنائي الداخلي للبوت: <b>${user.twoFAEnabled ? "🟢 مفعل ويحمي سحوباتك" : "🔴 غير مفعل وعرضة للمخاطر"}</b>`, { parse_mode: "HTML", ...SETTINGS_MENU }).catch(() => {}); return;
     }
 
     if (text === "🔐 إعدادات التحقق بخطوتين للبوت") {
       if (user.twoFAEnabled) {
         user.twoFAEnabled = false; user.twoFASecret = null; await user.save();
-        bot.sendMessage(chatId, "🔓 تم تعطيل التحقق بخطوتين للبوت.", SETTINGS_MENU).catch(() => {}); return;
+        bot.sendMessage(chatId, "🔓 تم تعطيل التحقق بخطوتين لحساب البوت بأمان.", SETTINGS_MENU).catch(() => {}); return;
       }
       const secret = authenticator.generateSecret();
       const encryptedSecret = encrypt(secret); 
@@ -705,34 +730,44 @@ bot.on("message", async (msg) => {
       user.stateMeta = { tempSecret: encryptedSecret }; 
       await user.save();
       
-      bot.sendMessage(chatId, `🔑 كود السيكرت الخاص بك بالبوت:\n<code>${secret}</code>\n\nأدخل الرمز المكون من 6 أرقام من تطبيق Authenticator للتأكيد:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
+      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator ثم أرسل الرمز المكون من 6 أرقام هنا للتأكيد والتنشيط:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
     }
 
     if (text === "💬 مساعدة") {
-      bot.sendMessage(chatId, `💬 <b>مركز الدعم وشرح تفعيل الأمان (2FA)</b>\n\nتواصل مع الدعم الفني: @YourNewAdmin`, { parse_mode: "HTML", ...MAIN_MENU }); return;
+      bot.sendMessage(chatId, 
+        `💬 <b>دليل تفعيل التحقق بخطوتين (2FA) واستخراج الأكواد الاحتياطية للحسابات:</b>\n\n` +
+        `1️⃣ افتح إعدادات حساب Google الذي أنشأته عبر البوت.\n` +
+        `2️⃣ انتقل إلى علامة تبويب <b>الأمان (Security)</b>.\n` +
+        `3️⃣ ابحث عن خيار <b>التحقق بخطوتين (2-Step Verification)</b> وقم بتفعيله برقم هاتفك.\n` +
+        `4️⃣ بعد انتهاء التفعيل، انزل لأسفل نفس الصفحة وابحث عن خيار <b>الرموز الاحتياطية (Backup Codes)</b>.\n` +
+        `5️⃣ اضغط على "الحصول على الرموز"، ثم قم بنسخ الـ 8 رموز الظاهرة أمامك بالكامل وأرسلها للبوت دفعة واحدة ليتم تأكيد حسابك بنجاح وضخ رصيدك.\n\n` +
+        `📞 <b>للدعم الفني المباشر والاستفسارات الأخرى:</b> @YourNewAdmin`, 
+        { parse_mode: "HTML", disable_web_page_preview: false, ...MAIN_MENU }
+      ).catch(() => {}); 
+      return;
     }
 
     if (text === "🔙 رجوع") { 
       user.state = null; user.stateMeta = null; await user.save();
-      bot.sendMessage(chatId, "👋 العودة للقائمة الرئيسية", MAIN_MENU).catch(() => {}); return; 
+      bot.sendMessage(chatId, "👋 العودة الذكية للقائمة الرئيسية.", MAIN_MENU).catch(() => {}); return; 
     }
 
   } catch (err) {
-    console.error("خطأ عام:", err);
-    bot.sendMessage(chatId, "❌ حدث خطأ داخلي في النظام.", MAIN_MENU).catch(() => {});
+    console.error("خطأ عام في البوت:", err);
+    bot.sendMessage(chatId, "❌ حدث خطأ داخلي في النظام. الرجاء إعادة المحاولة.", MAIN_MENU).catch(() => {});
   } finally {
     clearTimeout(safetyTimeout);
     processingUsers.delete(userId);
   }
 });
 
-// --- الدخول الشريع للوحة التحكم للأدمن فقط عبر الأمر ---
+// --- الدخول السريع والآمن للوحة تحكم الإدارة (للأدمن فقط) ---
 bot.onText(/\/admin/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
-  bot.sendMessage(msg.chat.id, `⚙️ <b>مرحباً بك في لوحة تحكم الإدارة الشاملة</b>\n\nاختر أحد الأوامر والوظائف من القائمة أدناه لإدارة البوت بالكامل:`, ADMIN_MENU).catch(() => {});
+  bot.sendMessage(msg.chat.id, `⚙️ <b>مرحباً بك في لوحة تحكم الإدارة الشاملة</b>\n\nاختر أحد الأوامر والوظائف من القائمة أدناه لإدارة البوت بالكامل وبضغطة واحدة:`, ADMIN_MENU).catch(() => {});
 });
 
-// مراجعة وتنفيذ طلبات الأزرار المباشرة للأدمن (الأزرار الانلاين)
+// مراجعة وتنفيذ طلبات الأزرار المباشرة للأدمن (الأزرار الإنلاين تفاعلية)
 bot.on("callback_query", async (query) => {
   if (query.from.id !== ADMIN_ID) return;
   const data = query.data;
@@ -755,8 +790,8 @@ bot.on("callback_query", async (query) => {
       const task = await Task.findOneAndUpdate({ _id: taskId, status: "pending" }, { status: "rejected" });
       if (task && task.accountId) {
         await Account.findByIdAndUpdate(task.accountId, { assigned: true, isWasted: true });
-        bot.sendMessage(task.userId, `❌ تم رفض حساب الـ Gmail الخاص بك من قبل المسؤول لأنه غير مطابق للتعليمات.`).catch(() => {});
-        bot.editMessageText(`❌ <b>تم رفض هذا الحساب وإتلافه نهائياً:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
+        bot.sendMessage(task.userId, `❌ تم رفض حساب الـ Gmail الخاص بك من قبل المسؤول لأنه غير مطابق للتعليمات أو مسحوب الـ 2FA.`).catch(() => {});
+        bot.editMessageText(`❌ <b>تم رفض هذا الحساب وإتلافه نهائياً من المستودع:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
       }
     }
 
@@ -764,8 +799,8 @@ bot.on("callback_query", async (query) => {
       const withId = data.replace("app_with_", "");
       const withdraw = await Withdrawal.findOneAndUpdate({ _id: withId, status: "pending" }, { status: "approved" });
       if (withdraw) {
-        bot.sendMessage(withdraw.userId, `💸 <b>تمت الموافقة على طلب سحبك بنجاح! تم تحويل الرصيد لمحفظتك.</b>`, { parse_mode: "HTML" }).catch(() => {});
-        bot.editMessageText(`✅ <b>تمت الموافقة على التحويل وإرسال الرصيد:</b>\nالمبلغ: $${fmt(withdraw.amount)}`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
+        bot.sendMessage(withdraw.userId, `💸 <b>تمت الموافقة على طلب سحبك بنجاح! تم تحويل الرصيد المالي لمحفظتك المذكورة بنجاح.</b>`, { parse_mode: "HTML" }).catch(() => {});
+        bot.editMessageText(`✅ <b>تمت الموافقة على التحويل وإرسال الرصيد:</b>\nالمبلغ الإجمالي: $${fmt(withdraw.amount)}`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
       }
     }
 
@@ -774,19 +809,20 @@ bot.on("callback_query", async (query) => {
       const withdraw = await Withdrawal.findOneAndUpdate({ _id: withId, status: "pending" }, { status: "rejected" });
       if (withdraw) {
         await User.findOneAndUpdate({ telegramId: withdraw.userId }, { $inc: { balance: withdraw.totalDeduction } });
-        bot.sendMessage(withdraw.userId, `❌ <b>تم رفض طلب السحب الخاص بك.</b> وأعيدت الأموال إلى رصيدك بالكامل.`, { parse_mode: "HTML" }).catch(() => {});
-        bot.editMessageText(`❌ <b>تم رفض السحب وإعادة الرصيد بالكامل للمستخدم:</b>\nالمعرف: <code>${withdraw.userId}</code>`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
+        bot.sendMessage(withdraw.userId, `❌ <b>تم رفض طلب السحب الخاص بك من قبل الإدارة المخصصة.</b> وأعيدت الأموال والرسوم إلى رصيدك الداخلي بالكامل لتعديل البيانات.`, { parse_mode: "HTML" }).catch(() => {});
+        bot.editMessageText(`❌ <b>تم رفض السحب وإعادة الرصيد بالكامل للمستخدم:</b>\nالمعرف الفريد: <code>${withdraw.userId}</code>`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
       }
     }
   } catch (err) {
-    console.error("خطأ في تنفيذ الـ callback:", err);
+    console.error("خطأ في تنفيذ الـ callback للتفاعلات البينية للأدمن:", err);
   } finally {
-    bot.answerCallbackQuery(query.id, { text: "تمت المعالجة" }).catch(() => {});
+    bot.answerCallbackQuery(query.id, { text: "تمت المعالجة بنجاح" }).catch(() => {});
   }
 });
 
+// الاتصال الدائم بقاعدة البيانات وتشغيل خادم البوت المباشر
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log("MongoDB active and Dashboard ready"))
+  .then(() => console.log("MongoDB active and Dashboard ready completely"))
   .catch((err) => console.error(err));
 
-http.createServer((req, res) => { res.end("Online"); }).listen(process.env.PORT || 8080);
+http.createServer((req, res) => { res.end("Online Live Server ready"); }).listen(process.env.PORT || 8080);
