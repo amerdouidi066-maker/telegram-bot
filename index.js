@@ -15,13 +15,30 @@ mongoose.connect(mongoUri)
   .then(() => console.log('✅ Connected to MongoDB'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
-// دالة وهمية لتوليد بيانات حساب عشوائي (استبدلها بمنطق النظام الخاص بك)
+// ✨ تم تحديث هذه الدالة لتوليد بيانات عشوائية ومختلفة تماماً في كل مرة
 function generateRandomAccountData() {
+    const firstNames = ["William", "James", "Oliver", "Lucas", "Benjamin", "Mason", "Ethan", "Alexander"];
+    const lastNames = ["Martinez", "Smith", "Johnson", "Brown", "Jones", "Miller", "Davis", "Rodriguez"];
+    
+    const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
+    const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
+    const fullName = `${firstName} ${lastName}`;
+    
+    // توليد جزء فريد للإيميل لمنع التكرار
+    const randomHex = Math.random().toString(16).substring(2, 8);
+    const email = `${firstName.toLowerCase()}${lastName.toLowerCase()}_${randomHex}@gmail.com`;
+    
+    // كلمة مرور عشوائية قوية
+    const password = `Pass_${Math.random().toString(36).substring(2, 10)}`;
+    
+    // بريد الاستعادة الثابت الخاص بك
+    const recoveryEmail = "ryal2422@gmail.com"; 
+
     return {
-        fullName: "William Martinez",
-        email: "williammartinez_aae16a@gmail.com",
-        password: "Pass_1b4a73a0",
-        recoveryEmail: "ryal2422@gmail.com"
+        fullName,
+        email,
+        password,
+        recoveryEmail
     };
 }
 
@@ -57,7 +74,7 @@ bot.on('message', async (msg) => {
         const firstName = nameParts[0] || '';
         const lastName = nameParts.slice(1).join(' ') || '';
 
-        // 2. صياغة الرسالة (الاسم واللقب منفصلين، وبدون نص التحقق بخطوتين)
+        // 2. صياغة الرسالة المنفصلة الأسطر وبدون التحقق بخطوتين
         const accountInfoMessage = `
 📦 **بيانات الحساب المطلوب إنشاؤه:**
 
@@ -85,11 +102,10 @@ async function runInitialCheck(chatId, account) {
         const isEmailValid = checkEmailFormat(account.email); 
 
         if (!isEmailValid) {
-            // إصلاح وسم الـ HTML المشوه وعرض رسالة خطأ نظيفة
             return await bot.sendMessage(chatId, "❌ **فشل الفحص:** صيغة البريد الإلكتروني غير صالحة.", { parse_mode: 'Markdown' });
         }
 
-        // في حال النجاح: يظهر بريد الاستعادة أولاً ثم تطلب تفعيل التحقق بخطوتين
+        // في حال النجاح: يظهر بريد الاستعادة أولاً وتطلب تفعيل التحقق بخطوتين هنا
         const successMessage = `
 ✅ **تم التفعيل والإنشاء بنجاح!**
 🔗 **تم ربط بريد الاستعادة الإلزامي:** \`${account.recoveryEmail}\`
@@ -107,7 +123,7 @@ async function runInitialCheck(chatId, account) {
                 ]
             }
         });
-    }, 2000); // الفحص يستغرق ثانيتين كمثال
+    }, 2000); 
 }
 
 // معالجة الأزرار العائمة (Inline Buttons)
@@ -116,7 +132,7 @@ bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
 
     if (data === 'confirm_2fa') {
-        await bot.sendMessage(chatId, "🔒 **ممتاز! تم تأكيد تفعيل 2FA وحفظ الحساب في الداتابيز بنجاح.**", { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, "🔒 **ممتاز! تم تأكيد تفعيل 2FA وحفظ الحساب بنجاح.**", { parse_mode: 'Markdown' });
     }
     
     if (data === 'cancel_creation') {
