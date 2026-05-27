@@ -434,7 +434,7 @@ bot.on("message", async (msg) => {
       bot.sendMessage(chatId, 
         `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة بنجاح!</b>\n\n` +
         `⚠️ <b>الخطوة التالية الهامة والأخيرة (تأمين الحساب):</b>\n` +
-        `توجه الآن إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، then استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات لحفظ أمان الحساب:`, 
+        `توجه الآن إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات لحفظ أمان الحساب:`, 
         { parse_mode: "HTML", reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }
       ).catch(() => {});
       return;
@@ -659,6 +659,19 @@ bot.on("callback_query", async (query) => {
     console.error("خطأ في تنفيذ الـ callback:", err);
   } finally {
     bot.answerCallbackQuery(query.id, { text: "تمت العملية" }).catch(() => {});
+  }
+});
+
+// أمر تصفير وقسم الحسابات القديمة (متاح للأدمن فقط)
+bot.onText(/\/clearall/, async (msg) => {
+  if (msg.from.id !== ADMIN_ID) return;
+  try {
+    bot.sendMessage(msg.chat.id, "⚙️ جاري مسح جميع الحسابات من قاعدة البيانات...").catch(() => {});
+    const result = await Account.deleteMany({});
+    bot.sendMessage(msg.chat.id, `🗑️ تم مسح المستودع بنجاح!\n✨ عدد الحسابات المخزنة السابقة التي حُذفت: <b>${result.deletedCount}</b> حساب.`, { parse_mode: "HTML" }).catch(() => {});
+  } catch (err) {
+    console.error("خطأ أثناء مسح الحسابات:", err.message);
+    bot.sendMessage(msg.chat.id, "❌ حدث خطأ أثناء محاولة مسح الحسابات.").catch(() => {});
   }
 });
 
