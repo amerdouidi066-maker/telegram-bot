@@ -225,7 +225,7 @@ async function sendPendingTasksToAdmin(chatId) {
         `👤 من المستخدم: <code>${task.userId}</code>\n` +
         `📧 البريد: <code>${escapeHtml(task.accountEmail)}</code>\n` +
         `🔑 الباسورد: <code>${escapeHtml(plainPassword)}</code>\n\n` +
-        `🚨 <b>أكواد الطوارئ والنسخ الاحتياطي (2FA):</b>\n<code>${escapeHtml(decryptedCodes)}</code>`, {
+        `🚨 <b>رمز النسخ الاحتياطي المرسل (2FA):</b>\n<code>${escapeHtml(decryptedCodes)}</code>`, {
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [[{ text: "✅ قبول وضخ رصيد", callback_data: `app_task_${task._id}` }, { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` }]] }
       }).catch((e) => console.error(e.message));
@@ -279,7 +279,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
       `📌 <b>شروط قبول الحسابات الجديدة الإلزامية:</b>\n` +
       `1️⃣ إنشاء الحساب بالبيانات المعطاة لك.\n` +
       `2️⃣ ربط بريد الاستعادة المعتمد تلقائياً وبنجاح.\n` +
-      `3️⃣ <b>تفعيل التحقق بخطوتين (2FA) لـ Google وإرسال الرموز الـ 8 وإلا لن يتم الدفع لك نهائياً.</b>\n\n` +
+      `3️⃣ تفعيل التحقق بخطوتين (2FA) لـ Google **وإرسال أحد الرموز الاحتياطية المكون من 8 أرقام.**\n\n` +
       `💵 السعر لكل حساب مطابق للشروط: <b>$0.15</b>`,
       { parse_mode: "HTML", ...MAIN_MENU }
     ).catch(() => {});
@@ -456,21 +456,22 @@ bot.on("message", async (msg) => {
 
       if (text === "❓ كيفية التفعيل") {
         bot.sendMessage(chatId, 
-          `📱 <b>طريقة استخراج أكواد 2FA لـ Gmail:</b>\n\n` +
+          `📱 <b>طريقة استخراج كود 2FA لـ Gmail:</b>\n\n` +
           `1️⃣ افتح حساب Gmail الجديد الخاص بك.\n` +
           `2️⃣ اذهب لإعدادات الحساب ➡️ <b>الأمان (Security)</b>.\n` +
           `3️⃣ قم بتفعيل <b>التحقق بخطوتين (2-Step Verification)</b> برقم هاتفك.\n` +
           `4️⃣ بعد انتهاء التفعيل، انقر على خيار <b>الرموز الاحتياطية (Backup Codes)</b>.\n` +
-          `5️⃣ قم بإنشاء الرموز، وانسخ الأكواد الـ 8 كاملة وأرسلها هنا في رسالة واحدة متصلة لتأكيد المراجعة.`,
+          `5️⃣ قم بإنشاء الرموز، وانسخ **رمزًا واحدًا فقط مكونًا من 8 أرقام** وأرسله هنا لتأكيد المراجعة.`,
           { reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }
         ).catch(() => {});
         return;
       }
       
-      const backupCodes = text.trim();
-      // شرط إجباري: التحقق من وجود مدخلات للأكواد بطول كافٍ لمنع الرسائل الفارغة أو الوهمية
-      if (backupCodes.length < 15) {
-        bot.sendMessage(chatId, "⚠️ خطأ! يجب تفعيل الـ 2FA وإرسال الرموز الـ 8 الاحتياطية كاملة ليتم قبول طلبك ودفع مستحقاتك:", { reply_markup: { keyboard: [["❓ كيفية التفعيل"], ["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }).catch(() => {});
+      const backupCodes = text.trim().replace(/\s/g, ""); // إزالة المسافات إن وجدت لتسهيل الفحص
+      
+      // تعديل الفحص البرمجي: التحقق من أن المدخلات تتكون من 8 أرقام تماماً
+      if (!/^\d{8}$/.test(backupCodes)) {
+        bot.sendMessage(chatId, "⚠️ خطأ! يرجى إرسال **أحد الرموز الاحتياطية المكون من 8 أرقام فقط** بدون حروف أو رموز أخرى لتتم مراجعة حسابك بنجاح:", { reply_markup: { keyboard: [["❓ كيفية التفعيل"], ["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }).catch(() => {});
         return;
       }
       
@@ -492,13 +493,13 @@ bot.on("message", async (msg) => {
         submittedAt: new Date()
       });
       
-      bot.sendMessage(chatId, `✅ <b>تم استلام الأكواد بنجاح وإرسال الحساب للمراجعة الإدارية والمالية!</b>`, MAIN_MENU).catch(() => {});
+      bot.sendMessage(chatId, `✅ <b>تم استلام الرمز بنجاح وإرسال الحساب للمراجعة الإدارية والمالية!</b>`, MAIN_MENU).catch(() => {});
       bot.sendMessage(ADMIN_ID,
         `📬 <b>طلب مراجعة حساب Gmail جديد (محمي بـ 2FA)</b>\n\n` +
         `👤 المستخدم: ${escapeHtml(user.firstName)} (<code>${user.telegramId}</code>)\n` +
         `📧 البريد: <code>${escapeHtml(account.email)}</code>\n` +
         `🔑 الباسورد: <code>${escapeHtml(decrypt(account.password))}</code>\n` + 
-        `🚨 <b>أكواد النسخ الاحتياطي المرسلة:</b>\n<code>${escapeHtml(backupCodes)}</code>`,
+        `🚨 <b>رمز النسخ الاحتياطي (8 أرقام):</b>\n<code>${escapeHtml(backupCodes)}</code>`,
         {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [[{ text: "✅ قبول وضخ رصيد", callback_data: `app_task_${task._id}` }, { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` }]] }
@@ -586,8 +587,8 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, 
           `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة المعتمد بنجاح متكامل!</b>\n\n` +
           `⚠️ <b>الخطوة التالية الإلزامية لاستحقاق الدفع (تأمين الحساب):</b>\n` +
-          `توجه الآن فوراً إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات.\n\n` +
-          `🛑 <i>بدون إرسال الأكواد الاحتياطية لن تتمكن الإدارة من مراجعة حسابك أو دفع الـ $0.15 لك.</i>\n\n` +
+          `توجه الآن فوراً إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أحد الرموز الاحتياطية المكون من 8 أرقام (Backup Codes)</b> وأرسله هنا في الشات.\n\n` +
+          `🛑 <i>بدون إرسال الرمز الاحتياطي لن تتمكن الإدارة من مراجعة حسابك أو دفع الـ $0.15 لك.</i>\n\n` +
           `💡 <i>إذا لم تكن تعرف طريقة التفعيل، اضغط على زر "❓ كيفية التفعيل" بالأسفل لمعرفة الخطوات بالتفصيل.</i>`, 
           { 
             parse_mode: "HTML", 
@@ -728,17 +729,17 @@ bot.on("message", async (msg) => {
       user.stateMeta = { tempSecret: encryptedSecret }; 
       await user.save();
       
-      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator ثم أرسل الرمز المكون من 6 أرقام هنا للتأكيد والتنشيط:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
+      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator then send the 6-digit code here to confirm:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
     }
 
     if (text === "💬 مساعدة") {
       bot.sendMessage(chatId, 
-        `💬 <b>دليل تفعيل التحقق بخطوتين (2FA) واستخراج الأكواد الاحتياطية للحسابات:</b>\n\n` +
+        `💬 <b>دليل تفعيل التحقق بخطوتين (2FA) واستخراج الكود الاحتياطي للحسابات:</b>\n\n` +
         `1️⃣ افتح إعدادات حساب Google الذي أنشأته عبر البوت.\n` +
         `2️⃣ انتقل إلى علامة تبويب <b>الأمان (Security)</b>.\n` +
         `3️⃣ ابحث عن خيار <b>التحقق بخطوتين (2-Step Verification)</b> وقم بتفعيله برقم هاتفك.\n` +
         `4️⃣ بعد انتهاء التفعيل، انزل لأسفل نفس الصفحة وابحث عن خيار <b>الرموز الاحتياطية (Backup Codes)</b>.\n` +
-        `5️⃣ اضغط على "الحصول على الرموز"، ثم قم بنسخ الـ 8 رموز الظاهرة أمامك بالكامل وأرسلها للبوت دفعة واحدة ليتم تأكيد حسابك بنجاح وضخ رصيدك.\n\n` +
+        `5️⃣ اضغط على "الحصول على الرموز"، ثم قم بنسخ **رمز واحد فقط مكون من 8 أرقام** وأرسله للبوت ليتم تأكيد حسابك بنجاح وضخ رصيدك.\n\n` +
         `📞 <b>للدعم الفني المباشر والاستفسارات الأخرى:</b> @CX_GCP`, 
         { parse_mode: "HTML", disable_web_page_preview: false, ...MAIN_MENU }
       ).catch(() => {}); 
@@ -778,9 +779,9 @@ bot.on("callback_query", async (query) => {
       const task = await Task.findOne({ _id: taskId, status: "pending" });
       
       if (task) {
-        // فحص صارم: منع تفعيل أو دفع أي رصيد إذا لم يقم المستخدم بإرسال أكواد الـ 2FA نهائياً لحماية أموالك
-        if (!task.backupCodes || decrypt(task.backupCodes).trim().length < 10) {
-          bot.sendMessage(adminChatId, `⚠️ <b>تنبيه أمني للأدمن:</b> لا يمكن قبول هذا الحساب وضخ الرصيد لأن المستخدم لم يقم بتزويد البوت بأكواد الـ 2FA الاحتياطية المطلوبة! يجب رفض الطلب.`, { parse_mode: "HTML" }).catch(() => {});
+        // فحص صارم: منع تفعيل أو دفع أي رصيد إذا لم يقم المستخدم بإرسال كود الـ 2FA نهائياً لحماية أموالك
+        if (!task.backupCodes || decrypt(task.backupCodes).trim().length < 7) {
+          bot.sendMessage(adminChatId, `⚠️ <b>تنبيه أمني للأدمن:</b> لا يمكن قبول هذا الحساب وضخ الرصيد لأن المستخدم لم يقم بتزويد البوت بالرمز الاحتياطي المطلوب! يجب رفض الطلب.`, { parse_mode: "HTML" }).catch(() => {});
           return;
         }
 
@@ -789,7 +790,7 @@ bot.on("callback_query", async (query) => {
         
         await User.findOneAndUpdate({ telegramId: task.userId }, { $inc: { balance: task.amount } });
         bot.sendMessage(task.userId, `✅ تم قبول حسابك ومضاف لك $${task.amount}`).catch(() => {});
-        bot.editMessageText(`✅ <b>تمت الموافقة بنجاح على الحساب وضخ الرصيد للمسخدم:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
+        bot.editMessageText(`✅ <b>تمت الموافقة بنجاح على الحساب وضخ الرصيد للمستخدم:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
       }
     }
 
