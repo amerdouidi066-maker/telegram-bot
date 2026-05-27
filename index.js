@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const http = require("http");
 const { authenticator } = require("otplib"); 
 const crypto = require("crypto");
+const emailCheck = require("email-check"); // المكتبة الجديدة لفحص وجود الإيميل فعلياً
 
 // --- إعدادات متغيرات البيئة ---
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
@@ -145,6 +146,7 @@ async function cleanupStaleSessions() {
   }
 }
 
+// 🟢 دالة الفحص الذكية والمحدثة للتحقق من الوجود الفعلي للإيميل على سيرفرات جوجل
 async function verifyEmail(email) {
   try {
     const emailRegex = /^[a-z0-9_](\.?[a-z0-9_]){4,29}@gmail\.com$/i;
@@ -155,9 +157,17 @@ async function verifyEmail(email) {
     const existingTask = await Task.findOne({ accountEmail: email, status: { $in: ["pending", "approved"] } });
     if (existingTask) return { valid: false, reason: "هذا الإيميل مستخدم بالفعل في النظام" };
 
-    return { valid: true, reason: "صيغة الإيميل سليمة وجاهز للتأمين." };
+    // فحص حي مباشر مع سيرفرات جوجل للتأكد من إنشاء الحساب حقيقةً
+    const exists = await emailCheck(email);
+    if (!exists) {
+      return { valid: false, reason: "لم يتم إنشاء هذا الإيميل فعلياً على جوجل! يرجى إنشاؤه أولاً كما هو مطلوب." };
+    }
+
+    return { valid: true, reason: "صيغة وجودة الإيميل سليمة وجاهز للتأمين." };
   } catch (err) {
-    return { valid: false, reason: "خطأ داخلي أثناء عملية الفحص التلقائي" };
+    // في حال فرض قيود مؤقتة من سيرفرات جوجل على الفحص التلقائي، يتم السماح للحساب بالمرور للمراجعة اليدوية للأمان
+    console.error("فحص SMTP مهمل أو مقيد حالياً:", err.message);
+    return { valid: true, reason: "مرور للمراجعة اليدوية" };
   }
 }
 
@@ -418,12 +428,13 @@ bot.on("message", async (msg) => {
       return;
     }
 
+    // 🟢 معالجة استلام الكود مع إصلاح الـ HTML وإضافة زر الرجوع
     if (user.state === "awaiting_gmail_backup_codes") {
-      if (text === "❌ إلغاء إنشاء الحساب") {
+      if (text === "❌ إلغاء إنشاء الحساب" || text === "🔙 رجوع") {
         const accountId = user.stateMeta?.accountId;
         if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
         user.state = null; user.stateMeta = null; await user.save();
-        bot.sendMessage(chatId, "🚫 تم إلغاء العملية.", MAIN_MENU).catch(() => {}); return;
+        bot.sendMessage(chatId, "👋 تم إلغاء العملية والعودة للقائمة الرئيسية.", MAIN_MENU).catch(() => {}); return;
       }
 
       if (text === "❓ كيفية التفعيل") {
@@ -434,7 +445,16 @@ bot.on("message", async (msg) => {
           `3️⃣ قم بتفعيل <b>التحقق بخطوتين (2-Step Verification)</b> برقم هاتفك.\n` +
           `4️⃣ بعد انتهاء التفعيل، انقر على خيار <b>الرموز الاحتياطية (Backup Codes)</b>.\n` +
           `5️⃣ قم بإنشاء الرموز، وانسخ **رمزًا واحدًا فقط مكونًا من 8 أرقام** وأرسله هنا لتأكيد المراجعة.`,
-          { reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }
+          { 
+            parse_mode: "HTML",
+            reply_markup: { 
+              keyboard: [
+                ["❓ كيفية التفعيل"],
+                ["🔙 رجوع", "❌ إلغاء إنشاء الحساب"]
+              ], 
+              resize_keyboard: true 
+            } 
+          }
         ).catch(() => {});
         return;
       }
@@ -442,7 +462,15 @@ bot.on("message", async (msg) => {
       const backupCodes = text.trim().replace(/\s/g, ""); 
       
       if (!/^\d{8}$/.test(backupCodes)) {
-        bot.sendMessage(chatId, "⚠️ خطأ! يرجى إرسال **أحد الرموز الاحتياطية المكون من 8 أرقام فقط** بدون حروف أو رموز أخرى لتتم مراجعة حسابك بنجاح:", { reply_markup: { keyboard: [["❓ كيفية التفعيل"], ["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }).catch(() => {});
+        bot.sendMessage(chatId, "⚠️ خطأ! يرجى إرسال **أحد الرموز الاحتياطية المكون من 8 أرقام فقط** بدون حروف أو رموز أخرى لتتم مراجعة حسابك بنجاح:", { 
+          reply_markup: { 
+            keyboard: [
+              ["❓ كيفية التفعيل"],
+              ["🔙 رجوع", "❌ إلغاء إنشاء الحساب"]
+            ], 
+            resize_keyboard: true 
+          } 
+        }).catch(() => {});
         return;
       }
       
@@ -469,7 +497,7 @@ bot.on("message", async (msg) => {
         `📬 <b>طلب مراجعة حساب Gmail جديد (محمي بـ 2FA)</b>\n\n` +
         `👤 المستخدم: ${escapeHtml(user.firstName)} (<code>${user.telegramId}</code>)\n` +
         `📧 البريد: <code>${escapeHtml(account.email)}</code>\n` +
-        `🔑 الباسورد: <code>${escapeHtml(decrypt(account.password))}</code>\n` + 
+        `🔑 الباسورد: <code>${escapeHtml(decrypt(account.password))}</code>\n\n` + 
         `🚨 <b>رمز النسخ الاحتياطي (8 أرقام):</b>\n<code>${escapeHtml(backupCodes)}</code>`,
         {
           parse_mode: "HTML",
@@ -539,14 +567,16 @@ bot.on("message", async (msg) => {
         const msgToDelete = user.stateMeta?.dataMessageId;
         const account = await Account.findById(accountId);
         
-        bot.sendMessage(chatId, `🔍 <b>جاري فحص صيغة الحساب والتحقق الأولي التلقائي...</b>`, { parse_mode: "HTML" }).catch(() => {});
+        bot.sendMessage(chatId, `🔍 <b>جاري فحص صيغة الحساب والتحقق الأولي التلقائي من وجوده...</b>`, { parse_mode: "HTML" }).catch(() => {});
+        
+        // 🟢 استدعاء دالة الفحص المحدثة التي تتصل بسيرفرات جوجل مباشرة
         const verification = await verifyEmail(account.email);
         
         if (!verification.valid) {
           if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
           await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
           user.state = null; user.stateMeta = null; await user.save();
-          bot.sendMessage(chatId, `❌ <b>فشل الفحص والتحقق:</b> ${escapeHtml(verification.reason)}`, MAIN_MENU).catch(() => {}); return;
+          bot.sendMessage(chatId, `❌ <b>فشل الفحص:</b> ${escapeHtml(verification.reason)}`, MAIN_MENU).catch(() => {}); return;
         }
         
         if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
@@ -554,10 +584,9 @@ bot.on("message", async (msg) => {
         user.state = "awaiting_gmail_backup_codes";
         await user.save();
 
-        // دمج التنبيه الجديد بحذف تسجيل الدخول فوراً لبدء المراجعة
         bot.sendMessage(chatId, 
-          `✅ <b>تم فحص صيغة الحساب بنجاح!</b>\n\n` +
-          `⚠️ <b>الخطوة التالية الإلزامية لاستحقاق الدفع وتأمين الحساب:</b>\n\n` +
+          `✅ <b>تم فحص صيغة وجودة الحساب بنجاح!</b>\n\n` +
+          `⚠️ <b>الخطوات التالية الإلزامية لاستحقاق الدفع وتأمين الحساب:</b>\n\n` +
           `1️⃣ توجه الآن فوراً إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>.\n` +
           `2️⃣ استخرج <b>أحد الرموز الاحتياطية المكون من 8 أرقام (Backup Codes)</b> وأرسله هنا في الشات.\n` +
           `3️⃣ 🚨 <b>تنبيه هام جداً:</b> يرجى <b>حذف تسجيل دخول الحساب من هاتفك أو متصفحك بالكامل فوراً</b> بعد إرسال الكود ليدخل الحساب في مرحلة المراجعة الرسمية بأمان.\n\n` +
@@ -568,7 +597,7 @@ bot.on("message", async (msg) => {
             reply_markup: { 
               keyboard: [
                 ["❓ كيفية التفعيل"],
-                ["❌ إلغاء إنشاء الحساب"]
+                ["🔙 رجوع", "❌ إلغاء إنشاء الحساب"]
               ], 
               resize_keyboard: true 
             } 
