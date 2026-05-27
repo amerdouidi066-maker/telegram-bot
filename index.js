@@ -55,7 +55,7 @@ const accountSchema = new mongoose.Schema({
   assigned: { type: Boolean, default: false },
   assignedTo: { type: Number, default: null },
   assignedAt: { type: Date, default: null },
-  isWasted: { type: Boolean, default: false } // حماية: لمنع إعادة تدوير الحسابات المرفوضة
+  isWasted: { type: Boolean, default: false }
 }, { timestamps: true });
 
 const taskSchema = new mongoose.Schema({
@@ -189,7 +189,7 @@ async function sendPendingTasksToAdmin(chatId) {
       const plainPassword = account ? decrypt(account.password) : "غير متوفر";
       const decryptedCodes = decrypt(task.backupCodes);
 
-      bot.sendMessage(chatId, 
+      await bot.sendMessage(chatId, 
         `📬 <b>طلب مراجعة حساب Gmail</b>\n\n` +
         `👤 من المستخدم: <code>${task.userId}</code>\n` +
         `📧 البريد: <code>${escapeHtml(task.accountEmail)}</code>\n` +
@@ -384,7 +384,6 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, `⚠️ لديك عملية معلقة بالفعل حالياً.`, CONFIRM_MENU).catch(() => {}); return;
       }
 
-      // تعديل الفلتر ليشمل فقط الحسابات غير التالفة (isWasted: false)
       const account = await Account.findOneAndUpdate(
         { assigned: false, isWasted: false }, 
         { assigned: true, assignedTo: user.telegramId, assignedAt: new Date() }, 
@@ -585,6 +584,8 @@ bot.onText(/\/admin/, async (msg) => {
 bot.on("callback_query", async (query) => {
   if (query.from.id !== ADMIN_ID) return;
   const data = query.data;
+  const msgId = query.message.message_id;
+  const adminChatId = query.message.chat.id;
 
   try {
     if (data.startsWith("app_task_")) {
@@ -593,6 +594,12 @@ bot.on("callback_query", async (query) => {
       if (task) {
         await User.findOneAndUpdate({ telegramId: task.userId }, { $inc: { balance: task.amount } });
         bot.sendMessage(task.userId, `✅ تم قبول حسابك ومضاف لك $${task.amount}`).catch(() => {});
+        
+        bot.editMessageText(`✅ <b>تمت الموافقة بنجاح على الحساب:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, {
+          chat_id: adminChatId,
+          message_id: msgId,
+          parse_mode: "HTML"
+        }).catch(() => {});
       }
     }
 
@@ -600,9 +607,14 @@ bot.on("callback_query", async (query) => {
       const taskId = data.replace("rej_task_", "");
       const task = await Task.findOneAndUpdate({ _id: taskId, status: "pending" }, { status: "rejected" });
       if (task && task.accountId) {
-        // تحديث آمن: الحساب المرفوض يعلم كـ Wasted ولا يعود للمخزون لمنع تكرار الخطأ والمشاكل للمستخدمين الآخرين
         await Account.findByIdAndUpdate(task.accountId, { assigned: true, isWasted: true });
         bot.sendMessage(task.userId, `❌ تم رفض حساب الـ Gmail الخاص بك.`).catch(() => {});
+        
+        bot.editMessageText(`❌ <b>تم رفض هذا الحساب وإتلافه نهائياً:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, {
+          chat_id: adminChatId,
+          message_id: msgId,
+          parse_mode: "HTML"
+        }).catch(() => {});
       }
     }
 
@@ -611,6 +623,12 @@ bot.on("callback_query", async (query) => {
       const withdraw = await Withdrawal.findOneAndUpdate({ _id: withId, status: "pending" }, { status: "approved" });
       if (withdraw) {
         bot.sendMessage(withdraw.userId, `💸 <b>تمت الموافقة على طلب سحبك بنجاح!</b>`, { parse_mode: "HTML" }).catch(() => {});
+        
+        bot.editMessageText(`✅ <b>تمت الموافقة على التحويل وإرسال الرصيد:</b>\nالمبلغ: $${fmt(withdraw.amount)}`, {
+          chat_id: adminChatId,
+          message_id: msgId,
+          parse_mode: "HTML"
+        }).catch(() => {});
       }
     }
 
@@ -620,10 +638,16 @@ bot.on("callback_query", async (query) => {
       if (withdraw) {
         await User.findOneAndUpdate({ telegramId: withdraw.userId }, { $inc: { balance: withdraw.totalDeduction } });
         bot.sendMessage(withdraw.userId, `❌ <b>تم رفض طلب السحب الخاص بك.</b> وأعيدت الأموال إلى رصيدك.`, { parse_mode: "HTML" }).catch(() => {});
+        
+        bot.editMessageText(`❌ <b>تم رفض السحب وإعادة الرصيد للمستخدم:</b>\nالمعرف: <code>${withdraw.userId}</code>`, {
+          chat_id: adminChatId,
+          message_id: msgId,
+          parse_mode: "HTML"
+        }).catch(() => {});
       }
     }
   } catch (err) {
-    console.error(err);
+    console.error("خطأ في تنفيذ الـ callback:", err);
   } finally {
     bot.answerCallbackQuery(query.id, { text: "تمت العملية" }).catch(() => {});
   }
@@ -634,19 +658,21 @@ bot.onText(/\/generate (\d+)/, async (msg, match) => {
   const count = parseInt(match[1], 10);
   let successCount = 0;
 
-  bot.sendMessage(msg.chat.id, `⚙️ جاري بدء توليد ${count} حساب...`).catch(() => {});
+  bot.sendMessage(msg.chat.id, `⚙️ جاري بدء توليد ${count} حساب بشكل عالي الفرادة...`).catch(() => {});
 
   for (let i = 0; i < count; i++) {
     try {
       const fn = getRandomItem(FIRST_NAMES); 
       const ln = getRandomItem(LAST_NAMES);
-      const email = `${fn.toLowerCase()}${ln.toLowerCase()}${Math.floor(1000 + Math.random() * 9000)}@gmail.com`;
-      const plainPassword = "Pass_" + Math.random().toString(36).substring(2,8);
+      // إضافة طابع ميكرو-زمني عشوائي لضمان عدم تكرار الإيميل نهائياً في الداتابيز
+      const uniqueSuffix = crypto.randomBytes(3).toString("hex");
+      const email = `${fn.toLowerCase()}${ln.toLowerCase()}_${uniqueSuffix}@gmail.com`;
+      const plainPassword = "Pass_" + crypto.randomBytes(4).toString("hex");
 
       await Account.create({ firstName: fn, lastName: ln, email, password: encrypt(plainPassword), birthDate: "1998-05-12", recoveryEmail: RECOVERY_EMAIL });
       successCount++;
     } catch (err) {
-      console.error(err.message);
+      console.error("فشل توليد حساب فردي:", err.message);
     }
   }
   bot.sendMessage(msg.chat.id, `✅ تم توليد الحسابات بنجاح. الناجح الفعلي: ${successCount}`).catch(() => {});
