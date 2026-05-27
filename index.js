@@ -24,7 +24,6 @@ if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
 const IV_LENGTH = 16; 
 const processingUsers = new Set();
 
-// إعداد المحرك المسؤول عن فحص الاتصال مع خوادم جوجل
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: { user: RECOVERY_EMAIL, pass: GMAIL_APP_PASSWORD }
@@ -156,7 +155,6 @@ async function cleanupStaleSessions() {
   }
 }
 
-// --- تحديث دالة الفحص لتتحقق برمجياً من صيغة البريد ومن ربط بريد الاستعادة تلقائياً ---
 async function verifyEmail(email) {
   try {
     const emailRegex = /^[a-z0-9_](\.?[a-z0-9_]){4,29}@gmail\.com$/i;
@@ -167,14 +165,13 @@ async function verifyEmail(email) {
     const existingTask = await Task.findOne({ accountEmail: email, status: { $in: ["pending", "approved"] } });
     if (existingTask) return { valid: false, reason: "هذا الإيميل مستخدم بالفعل في النظام" };
 
-    // فحص الربط الفعلي لبريد الاستعادة برمجياً عبر الـ SMTP Handshake مع خوادم جوجل
     const isLinked = await new Promise((resolve) => {
       transporter.verify((error) => {
         if (error) {
           console.error("خطأ اتصال خادم التحقق:", error.message);
-          resolve(false); // في حال وجود مشكلة في الاتصال بالخادم
+          resolve(false); 
         } else {
-          resolve(true); // الخادم متصل وقادر على تأكيد هوية الارتباط بالـ Recovery
+          resolve(true); 
         }
       });
     });
@@ -191,20 +188,33 @@ async function verifyEmail(email) {
 
 setInterval(cleanupStaleSessions, 30 * 60 * 1000);
 
-// --- القوائم الثابتة ---
+// --- القوائم الثابتة للمستخدمين ---
 const MAIN_MENU = { reply_markup: { keyboard: [["➕ أنشئ حساب Gmail جديد", "📋 حساباتي"], ["💰 الرصيد", "👥 الإحالات الخاصة بي"], ["⚙️ الإعدادات", "💬 مساعدة"]], resize_keyboard: true } };
-const CONFIRM_MENU = { reply_markup: { keyboard: [["✅ تم التفعيل والإنشاء"], ["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } };
+const CONFIRM_MENU = { reply_markup: { keyboard: [["✅ تم التفعيل والإنشاء"], ["❌ إلغاء إنشاء الحساب"], ["🔙 رجوع"]], resize_keyboard: true } };
 const CANCEL_MENU = { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } };
 const BALANCE_MENU = { reply_markup: { keyboard: [["📝 سجل الرصيد", "💳 سحب"], ["🔙 رجوع"]], resize_keyboard: true } };
 const SETTINGS_MENU = { reply_markup: { keyboard: [["🔐 إعدادات التحقق بخطوتين للبوت"], ["🔙 رجوع"]], resize_keyboard: true } };
 const NETWORK_MENU = { reply_markup: { keyboard: [["💎 Tether (USDT-BEP-20) | 0% +0.03$ | min: 0.20$"], ["🔙 رجوع"]], resize_keyboard: true } };
+
+// --- قائمة التحكم الخاصة بالأدمن بالكامل ---
+const ADMIN_MENU = {
+  reply_markup: {
+    keyboard: [
+      ["📊 الإحصائيات العامة", "📬 مراجعة الحسابات المعلقة"],
+      ["💸 طلبات السحب المنتظرة", "➕ توليد حسابات للمستودع"],
+      ["🚫 حظر / إلغاء حظر مستخدم", "💰 شحن رصيد مستخدم يدوياً"],
+      ["🗑️ تفريغ المستودع بالكامل", "🔙 خروج من الإدارة"]
+    ],
+    resize_keyboard: true
+  }
+};
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 async function sendPendingTasksToAdmin(chatId) {
   try {
     const pendingTasks = await Task.find({ status: "pending" });
-    if (!pendingTasks.length) { bot.sendMessage(chatId, "🎉 لا توجد طلبات معلقة.").catch(() => {}); return; }
+    if (!pendingTasks.length) { bot.sendMessage(chatId, "🎉 لا توجد طلبات معلقة حالياً لحسابات Gmail.").catch(() => {}); return; }
     for (const task of pendingTasks) {
       const account = await Account.findById(task.accountId);
       const plainPassword = account ? decrypt(account.password) : "غير متوفر";
@@ -217,7 +227,7 @@ async function sendPendingTasksToAdmin(chatId) {
         `🔑 الباسورد: <code>${escapeHtml(plainPassword)}</code>\n\n` +
         `🚨 <b>أكواد الطوارئ (2FA):</b>\n<code>${escapeHtml(decryptedCodes)}</code>`, {
         parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [[{ text: "✅ قبول", callback_data: `app_task_${task._id}` }, { text: "❌ رفض ونهو الحساب", callback_data: `rej_task_${task._id}` }]] }
+        reply_markup: { inline_keyboard: [[{ text: "✅ قبول وضخ رصيد", callback_data: `app_task_${task._id}` }, { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` }]] }
       }).catch((e) => console.error(e.message));
     }
   } catch (err) {
@@ -229,15 +239,17 @@ async function sendStatsToAdmin(chatId) {
   const totalUsers = await User.countDocuments();
   const totalTasks = await Task.countDocuments({ status: "approved" });
   const pendingTasks = await Task.countDocuments({ status: "pending" });
+  const totalStock = await Account.countDocuments({ assigned: false, isWasted: false });
   const pendingWithdraws = await Withdrawal.countDocuments({ status: "pending" });
 
   bot.sendMessage(chatId, 
-    `📊 <b>إحصائيات النظام السريعة:</b>\n\n` +
-    `👥 إجمالي المستخدمين: <b>${totalUsers}</b>\n` +
-    `✅ الحسابات المقبولة: <b>${totalTasks}</b>\n` +
-    `⏳ حسابات قيد المراجعة: <b>${pendingTasks}</b>\n` +
-    `💸 طلبات سحب معلقة: <b>${pendingWithdraws}</b>`,
-    { parse_mode: "HTML" }
+    `📊 <b>إحصائيات النظام السريعة والشاملة:</b>\n\n` +
+    `👥 إجمالي المستخدمين بالبوت: <b>${totalUsers}</b>\n` +
+    `📦 الحسابات الجاهزة بالمستودع للعمل: <b>${totalStock}</b>\n` +
+    `✅ إجمالي الحسابات المقبولة (المباعة): <b>${totalTasks}</b>\n` +
+    `⏳ حسابات قيد المراجعة حالياً: <b>${pendingTasks}</b>\n` +
+    `💸 طلبات سحب معلقة تنتظر التحويل: <b>${pendingWithdraws}</b>`,
+    { parse_mode: "HTML", ...ADMIN_MENU }
   ).catch(() => {});
 }
 
@@ -288,16 +300,18 @@ bot.on("message", async (msg) => {
   
   try {
     const user = await getOrCreateUser(msg);
-    if (user.banned) { bot.sendMessage(chatId, "🚫 تم حظرك من استخدام البوت.").catch(() => {}); return; }
+    if (user.banned && userId !== ADMIN_ID) { bot.sendMessage(chatId, "🚫 تم حظرك من استخدام البوت.").catch(() => {}); return; }
     const text = msg.text;
 
+    // --- معالجة شاشات وأوامر الأدمن الحصرية ---
     if (userId === ADMIN_ID) {
-      if (text === "📋 عرض الحسابات المعلقة") { await sendPendingTasksToAdmin(chatId); return; } 
-      if (text === "📊 إحصائيات النظام السريعة") { await sendStatsToAdmin(chatId); return; } 
-      if (text === "💰 طلبات السحب المنتظرة") {
+      if (text === "📊 الإحصائيات العامة") { await sendStatsToAdmin(chatId); return; }
+      if (text === "📬 مراجعة الحسابات المعلقة") { await sendPendingTasksToAdmin(chatId); return; }
+      
+      if (text === "💸 طلبات السحب المنتظرة") {
         const pendingWithdraws = await Withdrawal.find({ status: "pending" });
         if (!pendingWithdraws.length) { 
-          bot.sendMessage(chatId, "🎉 لا توجد طلبات سحب معلقة حالياً.").catch(() => {}); 
+          bot.sendMessage(chatId, "🎉 لا توجد طلبات سحب معلقة حالياً.", ADMIN_MENU).catch(() => {}); 
         } else {
           for (const w of pendingWithdraws) {
             bot.sendMessage(chatId, `💸 <b>طلب سحب معلق:</b>\n\n👤 المستخدم آيدي: <code>${w.userId}</code>\n🌐 الشبكة: <b>${w.network}</b>\n💵 الصافي: $${fmt(w.amount)}\n📮 العنوان: <code>${escapeHtml(w.address)}</code>`, {
@@ -307,10 +321,97 @@ bot.on("message", async (msg) => {
           }
         }
         return;
-      } 
-      if (text === "🔙 خروج من الإدارة") { bot.sendMessage(chatId, "👋 تم الخروج والعودة للقائمة العامة.", MAIN_MENU).catch(() => {}); return; }
+      }
+
+      if (text === "➕ توليد حسابات للمستودع") {
+        user.state = "admin_awaiting_generate_count"; await user.save();
+        bot.sendMessage(chatId, "🔢 أرسل عدد الحسابات المراد توليدها تلقائياً للمستودع (مثال: 50):", { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } }).catch(() => {});
+        return;
+      }
+
+      if (text === "🚫 حظر / إلغاء حظر مستخدم") {
+        user.state = "admin_awaiting_ban_id"; await user.save();
+        bot.sendMessage(chatId, "🆔 أرسل الـ Telegram ID الخاص بالمستخدم المراد تعديل حالته وحظره/إلغاء حظره:", { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } }).catch(() => {});
+        return;
+      }
+
+      if (text === "💰 شحن رصيد مستخدم يدوياً") {
+        user.state = "admin_awaiting_charge_id"; await user.save();
+        bot.sendMessage(chatId, "👤 أرسل الـ Telegram ID للمستخدم المراد شحن حسابه:", { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } }).catch(() => {});
+        return;
+      }
+
+      if (text === "🗑️ تفريغ المستودع بالكامل") {
+        const result = await Account.deleteMany({});
+        bot.sendMessage(chatId, `🗑️ تم مسح وتفريغ المستودع بالكامل لحساباتك بنجاح!\n✨ عدد المحذوفات: <b>${result.deletedCount}</b> حساب تم تصفيره.`, { parse_mode: "HTML", ...ADMIN_MENU }).catch(() => {});
+        return;
+      }
+
+      if (text === "🔙 خروج من الإدارة") { 
+        user.state = null; user.stateMeta = null; await user.save();
+        bot.sendMessage(chatId, "👋 تم الخروج من لوحة التحكم والعودة للقائمة العامة للمستخدمين.", MAIN_MENU).catch(() => {}); 
+        return; 
+      }
+
+      // حالات معالجة مدخلات الأدمن
+      if (user.state === "admin_awaiting_generate_count") {
+        if (text === "❌ إلغاء العملية") { user.state = null; await user.save(); bot.sendMessage(chatId, "🛑 تم إلغاء العملية.", ADMIN_MENU).catch(() => {}); return; }
+        const count = parseInt(text.trim(), 10);
+        if (isNaN(count) || count <= 0) { bot.sendMessage(chatId, "❌ رقم غير صالح، أرسل عدداً صحيحاً:").catch(() => {}); return; }
+        user.state = null; await user.save();
+        bot.sendMessage(chatId, `⚙️ جاري بدء توليد ${count} حساب بشكل مؤتمت...`).catch(() => {});
+        let success = 0;
+        for (let i = 0; i < count; i++) {
+          try {
+            const fn = getRandomItem(FIRST_NAMES); const ln = getRandomItem(LAST_NAMES);
+            const uniqueSuffix = crypto.randomBytes(3).toString("hex");
+            const email = `${fn.toLowerCase()}${ln.toLowerCase()}_${uniqueSuffix}@gmail.com`;
+            const plainPassword = "Pass_" + crypto.randomBytes(4).toString("hex");
+            await Account.create({ firstName: fn, lastName: ln, email, password: encrypt(plainPassword), birthDate: "1998-05-12", recoveryEmail: RECOVERY_EMAIL });
+            success++;
+          } catch {}
+        }
+        bot.sendMessage(chatId, `✅ انتهاء التوليد التلقائي للفرادة والأسماء! النجاح الفعلي: <b>${success}</b> حساب تم ضخه للمستودع.`, { parse_mode: "HTML", ...ADMIN_MENU }).catch(() => {});
+        return;
+      }
+
+      if (user.state === "admin_awaiting_ban_id") {
+        if (text === "❌ إلغاء العملية") { user.state = null; await user.save(); bot.sendMessage(chatId, "🛑 تم إلغاء العملية.", ADMIN_MENU).catch(() => {}); return; }
+        const targetId = parseInt(text.trim(), 10);
+        if (isNaN(targetId)) { bot.sendMessage(chatId, "❌ معرف غير صحيح.").catch(() => {}); return; }
+        const targetUser = await User.findOne({ telegramId: targetId });
+        if (!targetUser) { bot.sendMessage(chatId, "❌ هذا المستخدم غير مسجل بالبوت أساساً.", ADMIN_MENU).catch(() => {}); user.state = null; await user.save(); return; }
+        targetUser.banned = !targetUser.banned;
+        await targetUser.save();
+        user.state = null; await user.save();
+        bot.sendMessage(chatId, `⚙️ تم تغيير حالة المستخدم بنجاح! وضع الحظر الحالي للحساب هو: <b>${targetUser.banned ? "🚫 محظور حالياً" : "🟢 نشط وسليم"}</b>`, { parse_mode: "HTML", ...ADMIN_MENU }).catch(() => {});
+        return;
+      }
+
+      if (user.state === "admin_awaiting_charge_id") {
+        if (text === "❌ إلغاء العملية") { user.state = null; await user.save(); bot.sendMessage(chatId, "🛑 تم إلغاء العملية.", ADMIN_MENU).catch(() => {}); return; }
+        const targetId = parseInt(text.trim(), 10);
+        if (isNaN(targetId)) { bot.sendMessage(chatId, "❌ معرف غير صحيح.").catch(() => {}); return; }
+        user.state = "admin_awaiting_charge_amount"; user.stateMeta = { targetId }; await user.save();
+        bot.sendMessage(chatId, `💵 أرسل الآن القيمة الرقمية المراد إضافتها لرصيد حساب المستخدم <code>${targetId}</code> (مثال: 1.50):`, { parse_mode: "HTML", reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } }).catch(() => {});
+        return;
+      }
+
+      if (user.state === "admin_awaiting_charge_amount") {
+        if (text === "❌ إلغاء العملية") { user.state = null; user.stateMeta = null; await user.save(); bot.sendMessage(chatId, "🛑 تم إلغاء العملية.", ADMIN_MENU).catch(() => {}); return; }
+        const amount = parseFloat(text.trim());
+        if (isNaN(amount) || amount <= 0) { bot.sendMessage(chatId, "❌ القيمة غير صالحة، أرسل رقماً صحيحاً:").catch(() => {}); return; }
+        const targetId = user.stateMeta?.targetId;
+        const targetUser = await User.findOneAndUpdate({ telegramId: targetId }, { $inc: { balance: amount } }, { new: true });
+        user.state = null; user.stateMeta = null; await user.save();
+        if (!targetUser) { bot.sendMessage(chatId, "❌ فشل الشحن، الحساب غير موجود.", ADMIN_MENU).catch(() => {}); return; }
+        bot.sendMessage(chatId, `✅ تم بنجاح شحن الحساب وإضافة القيمة! رصيد المستخدم الجديد الحالي هو: $${fmt(targetUser.balance)}`, ADMIN_MENU).catch(() => {});
+        bot.sendMessage(targetId, `💰 <b>تنبيه من الإدارة:</b> تم شحن وإضافة $${fmt(amount)} يدوياً إلى حسابك بنجاح من قبل المسؤول!`).catch(() => {});
+        return;
+      }
     }
 
+    // --- منطق معالجة شاشات المستخدمين العامين ---
     if (user.state === "awaiting_2fa_verification") {
       if (text === "❌ إلغاء العملية") {
         user.state = null; user.stateMeta = null; await user.save();
@@ -419,10 +520,7 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, `❌ لا توجد حسابات متاحة بالمستودع حالياً.`, MAIN_MENU).catch(() => {}); return; 
       }
       
-      updatedUser.stateMeta = { accountId: account._id.toString() };
-      await updatedUser.save();
-      
-      bot.sendMessage(chatId,
+      const sentMsg = await bot.sendMessage(chatId,
         `📧 <b>بيانات الحساب المطلوب إنشاؤه:</b>\n\n` +
         `👤 الاسم: <code>${escapeHtml(account.firstName)}</code>\n` +
         `👥 اللقب: <code>${escapeHtml(account.lastName)}</code>\n` +
@@ -432,40 +530,55 @@ bot.on("message", async (msg) => {
         `🔗 إيميل الاستعادة الإلزامي: <code>${escapeHtml(RECOVERY_EMAIL)}</code>`,
         { parse_mode: "HTML", ...CONFIRM_MENU }
       ).catch(() => {});
+
+      // تخزين آيدي رسالة البيانات لمسحها لاحقاً لحماية البيانات
+      updatedUser.stateMeta = { accountId: account._id.toString(), dataMessageId: sentMsg.message_id };
+      await updatedUser.save();
       return;
     }
 
-    if (text === "✅ تم التفعيل والإنشاء") {
-      if (user.state !== "awaiting_confirmation") { bot.sendMessage(chatId, "❌ لا يوجد حساب معلق لك.", MAIN_MENU).catch(() => {}); return; }
-      const accountId = user.stateMeta?.accountId;
-      const account = await Account.findById(accountId);
-      
-      bot.sendMessage(chatId, `🔍 <b>جاري التحقق الأولي من الحساب والتأكد من ربط بريد الاستعادة المعتمد...</b>`, { parse_mode: "HTML" }).catch(() => {});
-      const verification = await verifyEmail(account.email);
-      
-      if (!verification.valid) {
-        await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
+    if (user.state === "awaiting_confirmation") {
+      if (text === "🔙 رجوع" || text === "❌ إلغاء إنشاء الحساب") {
+        const accountId = user.stateMeta?.accountId;
+        const msgToDelete = user.stateMeta?.dataMessageId;
+        
+        if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
+        if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
+        
         user.state = null; user.stateMeta = null; await user.save();
-        bot.sendMessage(chatId, `❌ <b>فشل الفحص:</b> ${escapeHtml(verification.reason)}`, MAIN_MENU).catch(() => {}); return;
+        bot.sendMessage(chatId, "👋 تم إلغاء العملية والعودة للقائمة الرئيسية.", MAIN_MENU).catch(() => {});
+        return;
       }
-      
-      user.state = "awaiting_gmail_backup_codes";
-      await user.save();
 
-      bot.sendMessage(chatId, 
-        `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة المعتمد بنجاح!</b>\n\n` +
-        `⚠️ <b>الخطوة التالية الهامة والأخيرة (تأمين الحساب):</b>\n` +
-        `توجه الآن إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات لحفظ أمان الحساب:`, 
-        { parse_mode: "HTML", reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }
-      ).catch(() => {});
-      return;
-    }
+      if (text === "✅ تم التفعيل والإنشاء") {
+        const accountId = user.stateMeta?.accountId;
+        const msgToDelete = user.stateMeta?.dataMessageId;
+        const account = await Account.findById(accountId);
+        
+        bot.sendMessage(chatId, `🔍 <b>جاري التحقق الأولي من الحساب والتأكد من ربط بريد الاستعادة المعتمد...</b>`, { parse_mode: "HTML" }).catch(() => {});
+        const verification = await verifyEmail(account.email);
+        
+        if (!verification.valid) {
+          if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
+          await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
+          user.state = null; user.stateMeta = null; await user.save();
+          bot.sendMessage(chatId, `❌ <b>فشل الفحص:</b> ${escapeHtml(verification.reason)}`, MAIN_MENU).catch(() => {}); return;
+        }
+        
+        // مسح رسالة الحساب فوراً من شات المستخدم بعد تخطي الفحص بنجاح
+        if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
 
-    if (text === "❌ إلغاء إنشاء الحساب") {
-      const accountId = user.stateMeta?.accountId;
-      if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
-      user.state = null; user.stateMeta = null; await user.save();
-      bot.sendMessage(chatId, "🚫 تم إلغاء العملية.", MAIN_MENU).catch(() => {}); return;
+        user.state = "awaiting_gmail_backup_codes";
+        await user.save();
+
+        bot.sendMessage(chatId, 
+          `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة المعتمد بنجاح!</b>\n\n` +
+          `⚠️ <b>الخطوة التالية الهامة والأخيرة (تأمين الحساب):</b>\n` +
+          `توجه الآن إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات لحفظ أمان الحساب:`, 
+          { parse_mode: "HTML", reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }
+        ).catch(() => {});
+        return;
+      }
     }
 
     if (text === "📋 حساباتي") {
@@ -613,15 +726,13 @@ bot.on("message", async (msg) => {
   }
 });
 
-// --- لوحة التحكم والمسؤول ---
+// --- الدخول الشريع للوحة التحكم للأدمن فقط عبر الأمر ---
 bot.onText(/\/admin/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
-  bot.sendMessage(msg.chat.id, `⚙️ <b>لوحة تحكم الإدارة</b>`, {
-    parse_mode: "HTML",
-    reply_markup: { keyboard: [["📋 عرض الحسابات المعلقة", "💰 طلبات السحب المنتظرة"], ["📊 إحصائيات النظام السريعة", "🔙 خروج من الإدارة"]], resize_keyboard: true }
-  }).catch(() => {});
+  bot.sendMessage(msg.chat.id, `⚙️ <b>مرحباً بك في لوحة تحكم الإدارة الشاملة</b>\n\nاختر أحد الأوامر والوظائف من القائمة أدناه لإدارة البوت بالكامل:`, ADMIN_MENU).catch(() => {});
 });
 
+// مراجعة وتنفيذ طلبات الأزرار المباشرة للأدمن (الأزرار الانلاين)
 bot.on("callback_query", async (query) => {
   if (query.from.id !== ADMIN_ID) return;
   const data = query.data;
@@ -635,12 +746,7 @@ bot.on("callback_query", async (query) => {
       if (task) {
         await User.findOneAndUpdate({ telegramId: task.userId }, { $inc: { balance: task.amount } });
         bot.sendMessage(task.userId, `✅ تم قبول حسابك ومضاف لك $${task.amount}`).catch(() => {});
-        
-        bot.editMessageText(`✅ <b>تمت الموافقة بنجاح على الحساب:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, {
-          chat_id: adminChatId,
-          message_id: msgId,
-          parse_mode: "HTML"
-        }).catch(() => {});
+        bot.editMessageText(`✅ <b>تمت الموافقة بنجاح على الحساب وضخ الرصيد للمستخدم:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
       }
     }
 
@@ -649,13 +755,8 @@ bot.on("callback_query", async (query) => {
       const task = await Task.findOneAndUpdate({ _id: taskId, status: "pending" }, { status: "rejected" });
       if (task && task.accountId) {
         await Account.findByIdAndUpdate(task.accountId, { assigned: true, isWasted: true });
-        bot.sendMessage(task.userId, `❌ تم رفض حساب الـ Gmail الخاص بك.`).catch(() => {});
-        
-        bot.editMessageText(`❌ <b>تم رفض هذا الحساب وإتلافه نهائياً:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, {
-          chat_id: adminChatId,
-          message_id: msgId,
-          parse_mode: "HTML"
-        }).catch(() => {});
+        bot.sendMessage(task.userId, `❌ تم رفض حساب الـ Gmail الخاص بك من قبل المسؤول لأنه غير مطابق للتعليمات.`).catch(() => {});
+        bot.editMessageText(`❌ <b>تم رفض هذا الحساب وإتلافه نهائياً:</b>\n<code>${escapeHtml(task.accountEmail)}</code>`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
       }
     }
 
@@ -663,13 +764,8 @@ bot.on("callback_query", async (query) => {
       const withId = data.replace("app_with_", "");
       const withdraw = await Withdrawal.findOneAndUpdate({ _id: withId, status: "pending" }, { status: "approved" });
       if (withdraw) {
-        bot.sendMessage(withdraw.userId, `💸 <b>تمت الموافقة على طلب سحبك بنجاح!</b>`, { parse_mode: "HTML" }).catch(() => {});
-        
-        bot.editMessageText(`✅ <b>تمت الموافقة على التحويل وإرسال الرصيد:</b>\nالمبلغ: $${fmt(withdraw.amount)}`, {
-          chat_id: adminChatId,
-          message_id: msgId,
-          parse_mode: "HTML"
-        }).catch(() => {});
+        bot.sendMessage(withdraw.userId, `💸 <b>تمت الموافقة على طلب سحبك بنجاح! تم تحويل الرصيد لمحفظتك.</b>`, { parse_mode: "HTML" }).catch(() => {});
+        bot.editMessageText(`✅ <b>تمت الموافقة على التحويل وإرسال الرصيد:</b>\nالمبلغ: $${fmt(withdraw.amount)}`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
       }
     }
 
@@ -678,60 +774,19 @@ bot.on("callback_query", async (query) => {
       const withdraw = await Withdrawal.findOneAndUpdate({ _id: withId, status: "pending" }, { status: "rejected" });
       if (withdraw) {
         await User.findOneAndUpdate({ telegramId: withdraw.userId }, { $inc: { balance: withdraw.totalDeduction } });
-        bot.sendMessage(withdraw.userId, `❌ <b>تم رفض طلب السحب الخاص بك.</b> وأعيدت الأموال إلى رصيدك.`, { parse_mode: "HTML" }).catch(() => {});
-        
-        bot.editMessageText(`❌ <b>تم رفض السحب وإعادة الرصيد للمستخدم:</b>\nالمعرف: <code>${withdraw.userId}</code>`, {
-          chat_id: adminChatId,
-          message_id: msgId,
-          parse_mode: "HTML"
-        }).catch(() => {});
+        bot.sendMessage(withdraw.userId, `❌ <b>تم رفض طلب السحب الخاص بك.</b> وأعيدت الأموال إلى رصيدك بالكامل.`, { parse_mode: "HTML" }).catch(() => {});
+        bot.editMessageText(`❌ <b>تم رفض السحب وإعادة الرصيد بالكامل للمستخدم:</b>\nالمعرف: <code>${withdraw.userId}</code>`, { chat_id: adminChatId, message_id: msgId, parse_mode: "HTML" }).catch(() => {});
       }
     }
   } catch (err) {
     console.error("خطأ في تنفيذ الـ callback:", err);
   } finally {
-    bot.answerCallbackQuery(query.id, { text: "تمت العملية" }).catch(() => {});
+    bot.answerCallbackQuery(query.id, { text: "تمت المعالجة" }).catch(() => {});
   }
-});
-
-bot.onText(/\/clearall/, async (msg) => {
-  if (msg.from.id !== ADMIN_ID) return;
-  try {
-    bot.sendMessage(msg.chat.id, "⚙️ جاري مسح جميع الحسابات من قاعدة البيانات...").catch(() => {});
-    const result = await Account.deleteMany({});
-    bot.sendMessage(msg.chat.id, `🗑️ تم مسح المستودع بنجاح!\n✨ عدد الحسابات المخزنة السابقة التي حُذفت: <b>${result.deletedCount}</b> حساب.`, { parse_mode: "HTML" }).catch(() => {});
-  } catch (err) {
-    console.error("خطأ أثناء مسح الحسابات:", err.message);
-    bot.sendMessage(msg.chat.id, "❌ حدث خطأ أثناء محاولة مسح الحسابات.").catch(() => {});
-  }
-});
-
-bot.onText(/\/generate (\d+)/, async (msg, match) => {
-  if (msg.from.id !== ADMIN_ID) return;
-  const count = parseInt(match[1], 10);
-  let successCount = 0;
-
-  bot.sendMessage(msg.chat.id, `⚙️ جاري بدء توليد ${count} حساب بشكل عالي الفرادة...`).catch(() => {});
-
-  for (let i = 0; i < count; i++) {
-    try {
-      const fn = getRandomItem(FIRST_NAMES); 
-      const ln = getRandomItem(LAST_NAMES);
-      const uniqueSuffix = crypto.randomBytes(3).toString("hex");
-      const email = `${fn.toLowerCase()}${ln.toLowerCase()}_${uniqueSuffix}@gmail.com`;
-      const plainPassword = "Pass_" + crypto.randomBytes(4).toString("hex");
-
-      await Account.create({ firstName: fn, lastName: ln, email, password: encrypt(plainPassword), birthDate: "1998-05-12", recoveryEmail: RECOVERY_EMAIL });
-      successCount++;
-    } catch (err) {
-      console.error("فشل توليد حساب فردي:", err.message);
-    }
-  }
-  bot.sendMessage(msg.chat.id, `✅ تم توليد الحسابات بنجاح. الناجح الفعلي: ${successCount}`).catch(() => {});
 });
 
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log("MongoDB active"))
+  .then(() => console.log("MongoDB active and Dashboard ready"))
   .catch((err) => console.error(err));
 
 http.createServer((req, res) => { res.end("Online"); }).listen(process.env.PORT || 8080);
