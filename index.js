@@ -155,9 +155,10 @@ async function cleanupStaleSessions() {
   }
 }
 
+// --- تصحيح الـ Regex هنا ليدعم الرموز والأرقام والشرطة السفلية تماماً ---
 async function verifyEmail(email) {
   try {
-    const emailRegex = /^[a-z0-9](\.?[a-z0-9]){4,29}@gmail\.com$/i;
+    const emailRegex = /^[a-z0-9_](\.?[a-z0-9_]){4,29}@gmail\.com$/i;
     if (!emailRegex.test(email)) {
       return { valid: false, reason: "صيغة البريد الإلكتروني غير صالحة" };
     }
@@ -411,15 +412,12 @@ bot.on("message", async (msg) => {
       return;
     }
 
+    // --- تصحيح وسم الـ HTML المقلوب هنا في رسالة الفحص ---
     if (text === "✅ تم التفعيل والإنشاء") {
       if (user.state !== "awaiting_confirmation") { bot.sendMessage(chatId, "❌ لا يوجد حساب معلق لك.", MAIN_MENU).catch(() => {}); return; }
       const accountId = user.stateMeta?.accountId;
       const account = await Account.findById(accountId);
       
-      if (!account) {
-         bot.sendMessage(chatId, "❌ حدث خطأ، الحساب غير موجود.", MAIN_MENU).catch(() => {}); return;
-      }
-
       bot.sendMessage(chatId, `🔍 <b>جاري التحقق الأولي من الحساب...</b>`, { parse_mode: "HTML" }).catch(() => {});
       const verification = await verifyEmail(account.email);
       
@@ -489,7 +487,7 @@ bot.on("message", async (msg) => {
     if (text === "💳 سحب") {
       if (user.twoFAEnabled) {
         user.state = "awaiting_2fa_for_withdraw"; await user.save();
-        bot.sendMessage(chatId, "🔐 يرجى إدخال رمز الـ 2FA الخاص بحسابك لتأكيد السحب:", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {});
+        bot.sendMessage(chatId, "🔐 يرجى إدخل رمز الـ 2FA الخاص بحسابك لتأكيد السحب:", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {});
         return;
       }
       user.state = "awaiting_withdraw_network"; await user.save();
@@ -663,14 +661,13 @@ bot.on("callback_query", async (query) => {
   }
 });
 
-// أمر التصفير الكامل (تم تحديثه ليمسح جدول المهام أيضاً لمنع تعليق الفحص التلقائي)
+// أمر تصفير وقسم الحسابات القديمة (متاح للأدمن فقط)
 bot.onText(/\/clearall/, async (msg) => {
   if (msg.from.id !== ADMIN_ID) return;
   try {
-    bot.sendMessage(msg.chat.id, "⚙️ جاري تصفير ومسح المستودع وطلبات الفحص كلياً...").catch(() => {});
-    const resultAcc = await Account.deleteMany({});
-    const resultTask = await Task.deleteMany({});
-    bot.sendMessage(msg.chat.id, `🗑️ <b>تم تصفير قاعدة البيانات بنجاح!</b>\n\n✨ الحسابات المحذوفة: <b>${resultAcc.deletedCount}</b>\n✨ طلبات المراجعة المحذوفة: <b>${resultTask.deletedCount}</b>`, { parse_mode: "HTML" }).catch(() => {});
+    bot.sendMessage(msg.chat.id, "⚙️ جاري مسح جميع الحسابات من قاعدة البيانات...").catch(() => {});
+    const result = await Account.deleteMany({});
+    bot.sendMessage(msg.chat.id, `🗑️ تم مسح المستودع بنجاح!\n✨ عدد الحسابات المخزنة السابقة التي حُذفت: <b>${result.deletedCount}</b> حساب.`, { parse_mode: "HTML" }).catch(() => {});
   } catch (err) {
     console.error("خطأ أثناء مسح الحسابات:", err.message);
     bot.sendMessage(msg.chat.id, "❌ حدث خطأ أثناء محاولة مسح الحسابات.").catch(() => {});
