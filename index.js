@@ -453,7 +453,7 @@ bot.on("message", async (msg) => {
     }
 
     if (user.state === "awaiting_withdraw_network") {
-      // تعديل الأخطاء الإملائية ليتوافق فحص النص المرسل مع اسم الشبكة المعروض في الكيبورد تماماً
+      // تم تعديل الشرط هنا ليتوافق بدقة مع كيبورد الاختيار المتاح للمستخدم
       if (text.includes("USDT-BEP-20")) {
         user.state = "awaiting_withdraw_amount_network"; user.stateMeta = { network: "USDT-BEP20", feeAmount: 0.03 }; await user.save();
         bot.sendMessage(chatId, "💸 أدخل قيمة المبلغ رقمياً (حد أدنى 0.20):");
@@ -479,7 +479,7 @@ bot.on("message", async (msg) => {
       const { network, feeAmount, amount } = user.stateMeta || {};
       const totalRequired = amount + feeAmount;
 
-      // حماية ذرية فائقة: فحص وتأكيد رصيد الملاءة المالية والخصم في استعلام واحد متزامن ومضمون لمنع ثغرات السحب المتكرر
+      // حماية ذرية فائقة: فحص وتأكيد رصيد الملاءة المالية والخصم في استعلام واحد متزامن ومضمون
       const updatedUser = await User.findOneAndUpdate(
         { telegramId: user.telegramId, balance: { $gte: totalRequired } },
         { 
