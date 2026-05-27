@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const http = require("http");
 const { authenticator } = require("otplib"); 
 const crypto = require("crypto");
-const emailCheck = require("email-check"); // المكتبة الجديدة لفحص وجود الإيميل فعلياً
+const emailCheck = require("email-check"); 
 
 // --- إعدادات متغيرات البيئة ---
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
@@ -88,6 +88,7 @@ function encrypt(text) {
   return iv.toString("hex") + ":" + encrypted;
 }
 
+// فك التشفير
 function decrypt(text) {
   if (!text) return "";
   try {
@@ -146,7 +147,7 @@ async function cleanupStaleSessions() {
   }
 }
 
-// 🟢 دالة الفحص الذكية والمحدثة للتحقق من الوجود الفعلي للإيميل على سيرفرات جوجل
+// دالة فحص الوجود الفعلي للإيميل
 async function verifyEmail(email) {
   try {
     const emailRegex = /^[a-z0-9_](\.?[a-z0-9_]){4,29}@gmail\.com$/i;
@@ -157,7 +158,6 @@ async function verifyEmail(email) {
     const existingTask = await Task.findOne({ accountEmail: email, status: { $in: ["pending", "approved"] } });
     if (existingTask) return { valid: false, reason: "هذا الإيميل مستخدم بالفعل في النظام" };
 
-    // فحص حي مباشر مع سيرفرات جوجل للتأكد من إنشاء الحساب حقيقةً
     const exists = await emailCheck(email);
     if (!exists) {
       return { valid: false, reason: "لم يتم إنشاء هذا الإيميل فعلياً على جوجل! يرجى إنشاؤه أولاً كما هو مطلوب." };
@@ -165,7 +165,6 @@ async function verifyEmail(email) {
 
     return { valid: true, reason: "صيغة وجودة الإيميل سليمة وجاهز للتأمين." };
   } catch (err) {
-    // في حال فرض قيود مؤقتة من سيرفرات جوجل على الفحص التلقائي، يتم السماح للحساب بالمرور للمراجعة اليدوية للأمان
     console.error("فحص SMTP مهمل أو مقيد حالياً:", err.message);
     return { valid: true, reason: "مرور للمراجعة اليدوية" };
   }
@@ -237,6 +236,7 @@ async function sendStatsToAdmin(chatId) {
   ).catch(() => {});
 }
 
+// القائمة الترحيبية بعد تعديل الشروط (حذف بريد الاستعادة)
 bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
   try {
     const user = await getOrCreateUser(msg);
@@ -428,7 +428,7 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // 🟢 معالجة استلام الكود مع إصلاح الـ HTML وإضافة زر الرجوع
+    // شاشة استلام الكود والتعليمات (خالية تماماً من بريد الاستعادة)
     if (user.state === "awaiting_gmail_backup_codes") {
       if (text === "❌ إلغاء إنشاء الحساب" || text === "🔙 رجوع") {
         const accountId = user.stateMeta?.accountId;
@@ -562,6 +562,7 @@ bot.on("message", async (msg) => {
         return;
       }
 
+      // رسالة الخطوات والتنبيه بعد حذف بريد الاستعادة
       if (text === "✅ تم التفعيل والإنشاء") {
         const accountId = user.stateMeta?.accountId;
         const msgToDelete = user.stateMeta?.dataMessageId;
@@ -569,7 +570,6 @@ bot.on("message", async (msg) => {
         
         bot.sendMessage(chatId, `🔍 <b>جاري فحص صيغة الحساب والتحقق الأولي التلقائي من وجوده...</b>`, { parse_mode: "HTML" }).catch(() => {});
         
-        // 🟢 استدعاء دالة الفحص المحدثة التي تتصل بسيرفرات جوجل مباشرة
         const verification = await verifyEmail(account.email);
         
         if (!verification.valid) {
@@ -661,7 +661,7 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, "👋 تم العودة للقائمة السابقة.", MAIN_MENU).catch(() => {}); return;
       }
       if (text.includes("USDT-BEP-20")) {
-        user.state = "awaiting_withdraw_amount_network"; user.stateMeta = { network: "USDT-BEP20", feeAmount: 0.03 }; await user.save();
+        user.state = "awaiting_withdraw_amount_network"; user.stateMeta = { network: "USDT20", feeAmount: 0.03 }; await user.save();
         bot.sendMessage(chatId, "💸 أدخل قيمة المبلغ المراد سحبه رقمياً (الحد الأدنى 0.20):", { reply_markup: { keyboard: [["🔙 رجوع"]], resize_keyboard: true } }).catch(() => {});
       } else {
         user.state = null; await user.save(); bot.sendMessage(chatId, "👋 تم العودة للقائمة الرئيسية.", MAIN_MENU).catch(() => {});
@@ -731,9 +731,10 @@ bot.on("message", async (msg) => {
       user.stateMeta = { tempSecret: encryptedSecret }; 
       await user.save();
       
-      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator ثم أرسل الرمز المكون من 6 أرقام لتأكيد العملية:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
+      bot.sendMessage(chatId, `🔑 <b>مفتاح الأمان والسيكرت الخاص بك بالبوت:</b>\n<code>${secret}</code>\n\nقم بنسخ المفتاح وأضفه في تطبيق Google Authenticator then send the 6-digit code to verify:`, { parse_mode: "HTML", ...CANCEL_MENU }).catch(() => {}); return;
     }
 
+    // رسالة المساعدة بعد حذف بريد الاستعادة
     if (text === "💬 مساعدة") {
       bot.sendMessage(chatId, 
         `💬 <b>دليل تفعيل التحقق بخطوتين (2FA) واستخراج الكود الاحتياطي للحسابات:</b>\n\n` +
@@ -822,7 +823,7 @@ bot.on("callback_query", async (query) => {
       }
     }
   } catch (err) {
-    console.error("خطأ في تنفيذ الـ callback للتفاعلات البينية للأدمن:", err);
+    console.error("خطأ في تنفيذ الـ callback بالتفاعلات البينية للأدمن:", err);
   } finally {
     bot.answerCallbackQuery(query.id, { text: "تمت المعالجة بنجاح" }).catch(() => {});
   }
