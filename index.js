@@ -234,7 +234,7 @@ bot.on("message", async (msg) => {
     if (user.banned) { bot.sendMessage(chatId, "🚫 تم حظرك من استخدام البوت."); return; }
     const text = msg.text;
 
-    // --- قسم المسؤول الصلاحيات الخاصة بالأدمن ---
+    // --- قسم المسؤول - الصلاحيات الخاصة بالأدمن ---
     if (userId === ADMIN_ID) {
       if (text === "📋 عرض الحسابات المعلقة") {
         bot.processUpdate({ message: { chat: msg.chat, from: msg.from, text: "/pending" } }); return;
@@ -331,7 +331,7 @@ bot.on("message", async (msg) => {
         bot.sendMessage(chatId, `⚠️ لا يمكنك إنشاء حساب جديد حتى تنتهي مراجعة حساباتك المعلقة الحالية.`); return;
       }
 
-      // حماية ذرية لتثبيت حالة المستخدم ومنع الضغط المتكرر
+      // حماية ذرية لتثبيت حالة المستخدم ومنع الضغط المتكرر المتزامن
       const updatedUser = await User.findOneAndUpdate(
         { telegramId: user.telegramId, state: null },
         { $set: { state: "awaiting_confirmation" } },
@@ -453,7 +453,8 @@ bot.on("message", async (msg) => {
     }
 
     if (user.state === "awaiting_withdraw_network") {
-      if (text.includes("USDT-BE-20")) {
+      // تعديل الأخطاء الإملائية ليتوافق فحص النص المرسل مع اسم الشبكة المعروض في الكيبورد تماماً
+      if (text.includes("USDT-BEP-20")) {
         user.state = "awaiting_withdraw_amount_network"; user.stateMeta = { network: "USDT-BEP20", feeAmount: 0.03 }; await user.save();
         bot.sendMessage(chatId, "💸 أدخل قيمة المبلغ رقمياً (حد أدنى 0.20):");
       } else {
@@ -478,7 +479,7 @@ bot.on("message", async (msg) => {
       const { network, feeAmount, amount } = user.stateMeta || {};
       const totalRequired = amount + feeAmount;
 
-      // حماية ذرية فائقة: فحص وتأكيد رصيد الملاءة المالية والخصم في استعلام واحد متزامن ومضمون
+      // حماية ذرية فائقة: فحص وتأكيد رصيد الملاءة المالية والخصم في استعلام واحد متزامن ومضمون لمنع ثغرات السحب المتكرر
       const updatedUser = await User.findOneAndUpdate(
         { telegramId: user.telegramId, balance: { $gte: totalRequired } },
         { 
@@ -504,7 +505,7 @@ bot.on("message", async (msg) => {
         status: "pending" 
       });
 
-      bot.sendMessage(chatId, `✅ تم تسجيل طلب سحبك بنجاح وقيد المراجعة الفورية!`, MAIN_MENU);
+      bot.sendMessage(chatId, `✅ تم تسجيل طلب سحبك بنجاح وهو قيد المراجعة الفورية!`, MAIN_MENU);
       return;
     }
 
