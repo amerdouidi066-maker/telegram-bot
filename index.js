@@ -398,7 +398,7 @@ bot.on("message", async (msg) => {
       updatedUser.stateMeta = { accountId: account._id.toString() };
       await updatedUser.save();
       
-      // ✨ التعديل 1: عرض الاسم واللقب في أسطر منفصلة برمجياً + تأجيل تعليمات الـ 2FA للخطوة القادمة
+      // إصلاح الرسالة الأولى: الاسم واللقب منفصلان وبدون نص الـ 2FA نهائياً
       bot.sendMessage(chatId,
         `📧 <b>بيانات الحساب المطلوب إنشاؤه:</b>\n\n` +
         `👤 الاسم: <code>${escapeHtml(account.firstName)}</code>\n` +
@@ -420,20 +420,21 @@ bot.on("message", async (msg) => {
       bot.sendMessage(chatId, `🔍 <b>جاري التحقق الأولي من الحساب...</b>`, { parse_mode: "HTML" }).catch(() => {});
       const verification = await verifyEmail(account.email);
       
+      // إصلاح خطأ الـ HTML المشوه وسياق النص البرمجي المقبول هنا
       if (!verification.valid) {
         await Account.findByIdAndUpdate(accountId, { assigned: false, assignedTo: null });
         user.state = null; user.stateMeta = null; await user.save();
-        bot.sendMessage(chatId, `❌ <b>فشل الفحص:</b> ${verification.reason}`, MAIN_MENU).catch(() => {}); return;
+        bot.sendMessage(chatId, `❌ <b>فشل الفحص:</b> ${escapeHtml(verification.reason)}`, MAIN_MENU).catch(() => {}); return;
       }
       
       user.state = "awaiting_gmail_backup_codes";
       await user.save();
 
-      // ✨ التعديل 2: تظهر رسالة التحقق بخطوتين (2FA) والأكواد هنا بعد نجاح ربط بريد الاستعادة
+      // إظهار رسالة الأكواد والـ 2FA هنا فقط بعد نجاح عملية التحقق من الحساب
       bot.sendMessage(chatId, 
         `✅ <b>تم فحص وتأكيد ربط بريد الاستعادة بنجاح!</b>\n\n` +
         `⚠️ <b>الخطوة التالية الهامة والأخيرة (تأمين الحساب):</b>\n` +
-        `توجه الآن إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، ثم استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات لحفظ أمان الحساب:`, 
+        `توجه الآن إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>، then استخرج <b>أكواد النسخ الاحتياطي الـ 8 (Backup Codes)</b> وأرسلها كاملة هنا في الشات لحفظ أمان الحساب:`, 
         { parse_mode: "HTML", reply_markup: { keyboard: [["❌ إلغاء إنشاء الحساب"]], resize_keyboard: true } }
       ).catch(() => {});
       return;
