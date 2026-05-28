@@ -54,7 +54,7 @@ const taskSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   accountEmail: { type: String, required: true },
   accountId: { type: mongoose.Schema.Types.ObjectId, ref: "Account" },
-  backupCodes: { type: String, default: "" }, 
+  google2FASecret: { type: String, default: "" }, // تم التحديث لحفظ سيكرت الجيميل مشفر
   status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
   submittedAt: { type: Date, default: Date.now },
 }, { timestamps: true });
@@ -158,7 +158,6 @@ function fmt(n) { return Number(n).toFixed(2); }
 async function cleanupStaleSessions() {
   try {
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-    // التعديل: عند انتهاء الجلسات المعلقة تلقائياً يتم إتلاف الحساب لضمان عدم تكراره
     const stuckUsers = await User.find({ state: "awaiting_confirmation", updatedAt: { $lte: twoHoursAgo } });
     for (const user of stuckUsers) {
       const accountId = user.stateMeta?.accountId;
@@ -250,7 +249,6 @@ const ADMIN_MENU = {
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// تحديث أزرار القائمة تلقائياً عند تشغيل البوت
 bot.setMyCommands([
   { command: "start", description: "🚀 ابدأ استخدام البوت" },
   { command: "withdraw", description: "💸 طلب سحب" },
@@ -267,14 +265,25 @@ async function sendPendingTasksToAdmin(chatId) {
     for (const task of pendingTasks) {
       const account = await Account.findById(task.accountId);
       const plainPassword = account ? decrypt(account.password) : "غير متوفر";
-      const decryptedCodes = decrypt(task.backupCodes);
+      
+      // التعديل الذكي: فك تشفير مفتاح الـ 2FA وتوليد كود الـ 6 أرقام اللحظي للأدمن فوراً!
+      const plainSecret = decrypt(task.google2FASecret).replace(/\s/g, "").toUpperCase();
+      let liveCode = "خطأ في المفتاح";
+      let timeLeft = 0;
+      try {
+        liveCode = authenticator.generate(plainSecret);
+        timeLeft = authenticator.timeRemaining();
+      } catch (e) {}
 
       await bot.sendMessage(chatId, 
-        `📬 <b>طلب مراجعة حساب Gmail</b>\n\n` +
+        `📬 <b>طلب مراجعة حساب Gmail جديد</b>\n\n` +
         `👤 من المستخدم: <code>${task.userId}</code>\n` +
         `📧 البريد: <code>${escapeHtml(task.accountEmail)}</code>\n` +
         `🔑 الباسورد: <code>${escapeHtml(plainPassword)}</code>\n\n` +
-        `🚨 <b>رمز النسخ الاحتياطي المرسل (2FA):</b>\n<code>${escapeHtml(decryptedCodes)}</code>`, {
+        `🔐 <b>كود الـ 2FA اللحظي للحساب (Live OTP):</b>\n` +
+        `➡️ 🔥 <code>${liveCode}</code> 🔥\n` +
+        `⏳ ينتهي الرمز الحالي خلال: <b>${timeLeft} ثانية</b>\n\n` +
+        `⚙️ مفتاح الأمان السري الأصلي:\n<code>${plainSecret}</code>`, {
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [[{ text: "✅ قبول وضخ رصيد", callback_data: `app_task_${task._id}` }, { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` }]] }
       }).catch((e) => console.error(e.message));
@@ -309,7 +318,6 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
     
     if (user.state) {
       const accountId = user.stateMeta?.accountId;
-      // التعديل: إتلاف الحساب عند إعادة تشغيل البوت أثناء العملية لتغييره بالكامل
       if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true, assignedAt: null });
       user.state = null; user.stateMeta = null;
     }
@@ -328,7 +336,7 @@ bot.onText(/\/start(?:\s+(.+))?/, async (msg, match) => {
       `💰 <b>اكسب من إنشاء حسابات Gmail الآمنة!</b>\n\n` +
       `📌 <b>شروط قبول الحسابات الجديدة الإلزامية:</b>\n` +
       `1️⃣ إنشاء الحساب بالبيانات المعطاة لك.\n` +
-      `2️⃣ تفعيل التحقق بخطوتين (2FA) لـ Google **وإرسال أحد الرموز الاحتياطية المكون من 8 أرقام.**\n\n` +
+      `2️⃣ ربط الحساب بتطبيق 2FA Google Authenticator **وإرسال مفتاح الأمان السري (Secret Key).**\n\n` +
       `💵 السعر لكل حساب مطابق للشروط: <b>$0.17</b>`,
       { parse_mode: "HTML", ...MAIN_MENU }
     ).catch(() => {});
@@ -419,10 +427,8 @@ bot.on("message", async (msg) => {
           try {
             const fn = getRandomItem(FIRST_NAMES); 
             const ln = getRandomItem(LAST_NAMES);
-            
             const randomYear = Math.floor(Math.random() * (2003 - 1995 + 1)) + 1995;
             const randomDigits = Math.floor(Math.random() * 90) + 10; 
-            
             const email = `${fn.toLowerCase()}${ln.toLowerCase()}${randomYear}${randomDigits}@gmail.com`;
             const plainPassword = generateStrongPassword(); 
             const randomBirthDate = generateRandomBirthDate();
@@ -454,12 +460,9 @@ bot.on("message", async (msg) => {
         return;
       }
 
-      if (user.state === "admin_awaiting_charge_id") {
-        if (text === "❌ إلغاء العملية") { user.state = null; await user.save(); bot.sendMessage(chatId, "🛑 تم إلغاء العملية.", ADMIN_MENU).catch(() => {}); return; }
-        const targetId = parseInt(text.trim(), 10);
-        if (isNaN(targetId)) { bot.sendMessage(chatId, "❌ معرف غير صحيح.").catch(() => {}); return; }
-        user.state = "admin_awaiting_charge_amount"; user.stateMeta = { targetId }; await user.save();
-        bot.sendMessage(chatId, `💵 أرسل الآن القيمة الرقمية المراد إضافتها لرصيد حساب المستخدم <code>${targetId}</code> (مثال: 1.50):`, { parse_mode: "HTML", reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } }).catch(() => {});
+      if (text === "💰 شحن رصيد مستخدم يدوياً") {
+        user.state = "admin_awaiting_charge_id"; await user.save();
+        bot.sendMessage(chatId, "👤 أرسل الـ Telegram ID للمستخدم المراد شحن حسابه:", { reply_markup: { keyboard: [["❌ إلغاء العملية"]], resize_keyboard: true } }).catch(() => {});
         return;
       }
 
@@ -512,10 +515,10 @@ bot.on("message", async (msg) => {
       return;
     }
 
+    // التعديل الرئيسي: استقبال مفتاح الـ 2FA السري لـ Google Authenticator بدلاً من الأكواد الـ 8
     if (user.state === "awaiting_gmail_backup_codes") {
       if (text === "❌ إلغاء إنشاء الحساب" || text === "🔙 رجوع") {
         const accountId = user.stateMeta?.accountId;
-        // تحديث: إتلاف الحساب وتغييره بالكامل لمنع استخدامه مجدداً
         if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true });
         user.state = null; user.stateMeta = null; await user.save();
         bot.sendMessage(chatId, "👋 تم إلغاء العملية وتغيير الحساب بنجاح. عدت للقائمة الرئيسية.", MAIN_MENU).catch(() => {}); return;
@@ -523,12 +526,13 @@ bot.on("message", async (msg) => {
 
       if (text === "❓ كيفية التفعيل") {
         bot.sendMessage(chatId, 
-          `📱 <b>طريقة استخراج كود 2FA لـ Gmail:</b>\n\n` +
+          `📱 <b>طريقة ربط حساب الـ Gmail واستخراج السيكرت (Secret Key):</b>\n\n` +
           `1️⃣ افتح حساب Gmail الجديد الخاص بك.\n` +
           `2️⃣ اذهب لإعدادات الحساب ➡️ <b>الأمان (Security)</b>.\n` +
-          `3️⃣ قم بتفعيل <b>التحقق بخطوتين (2-Step Verification)</b> برقم هاتفك.\n` +
-          `4️⃣ بعد انتهاء التفعيل، انقر على خيار <b>الرموز الاحتياطية (Backup Codes)</b>.\n` +
-          `5️⃣ قم بإنشاء الرموز، وانسخ **رمزًا واحدًا فقط مكونًا من 8 أرقام** وأرسله هنا لتأكيد المراجعة.`,
+          `3️⃣ قم بالدخول إلى خيار <b>التحقق بخطوتين (2-Step Verification)</b>.\n` +
+          `4️⃣ انزل لأسفل واختر تطبيق <b>Authenticator</b> واضغط إعداد أو تغيير.\n` +
+          `5️⃣ سيظهر لك رمز باركود وأسفله خيار <b>"لا يمكن مسحه ضوئياً" (Can't scan it)</b> اضغط عليه ليظهر لك **مفتاح نصي سري طويل** (يتكون من حروف وأرقام مجتمعة).\n` +
+          `6️⃣ انسخ هذا المفتاح بالكامل وأرسله هنا مباشرة في الشات لتأكيد التسليم والمراجعة الإدارية.`,
           { 
             parse_mode: "HTML",
             reply_markup: { 
@@ -543,10 +547,11 @@ bot.on("message", async (msg) => {
         return;
       }
       
-      const backupCodes = text.trim().replace(/\s/g, ""); 
+      const cleanSecret = text.trim().replace(/\s/g, ""); 
       
-      if (!/^\d{8}$/.test(backupCodes)) {
-        bot.sendMessage(chatId, "⚠️ خطأ! يرجى إرسال **أحد الرموز الاحتياطية المكون من 8 أرقام فقط** بدون حروف أو رموز أخرى لتتم مراجعة حسابك بنجاح:", { 
+      // فحص أولي بسيط للتأكد من أن النص ليس كوداً عادياً بل سيكرت كيد تفعيل
+      if (cleanSecret.length < 10) {
+        bot.sendMessage(chatId, "⚠️ خطأ! النص المرسل قصير جداً ولا يبدو كمفتاح أمان (Secret Key) لتطبيق Google Authenticator. يرجى مراجعة التعليمات أو الضغط على زر المساعدة وإرسال المفتاح الصحيح:", { 
           reply_markup: { 
             keyboard: [
               ["❓ كيفية التفعيل"],
@@ -567,22 +572,29 @@ bot.on("message", async (msg) => {
       
       user.state = null; user.stateMeta = null; await user.save();
       
+      // حفظ البيانات وإنشاء المهمة للأدمن مع تشفير مفتاح الـ 2FA الجديد
       const task = await Task.create({
         userId: user.telegramId,
         amount: 0.17, 
         accountEmail: account.email,
         accountId: account._id,
-        backupCodes: encrypt(backupCodes), 
+        google2FASecret: encrypt(cleanSecret), 
         submittedAt: new Date()
       });
       
-      bot.sendMessage(chatId, `✅ <b>تم استلام الرمز بنجاح وإرسال الحساب للمراجعة الإدارية والمالية!</b>`, MAIN_MENU).catch(() => {});
+      bot.sendMessage(chatId, `✅ <b>تم استلام مفتاح الأمان بنجاح وإرسال الحساب للمراجعة التلقائية والإدارية!</b>`, MAIN_MENU).catch(() => {});
+      
+      // إرسال تنبيه فوري للأدمن مع الرمز الحي المتغير تلقائياً
+      let initialCode = "مفتاح تالف";
+      try { initialCode = authenticator.generate(cleanSecret.toUpperCase()); } catch(e){}
+
       bot.sendMessage(ADMIN_ID,
-        `📬 <b>طلب مراجعة حساب Gmail جديد (محمي بـ 2FA)</b>\n\n` +
+        `📬 <b>طلب مراجعة حساب Gmail جديد (منظومة الـ Live 2FA)</b>\n\n` +
         `👤 المستخدم: ${escapeHtml(user.firstName)} (<code>${user.telegramId}</code>)\n` +
         `📧 البريد: <code>${escapeHtml(account.email)}</code>\n` +
         `🔑 الباسورد: <code>${escapeHtml(decrypt(account.password))}</code>\n\n` + 
-        `🚨 <b>رمز النسخ الاحتياطي (8 أرقام):</b>\n<code>${escapeHtml(backupCodes)}</code>`,
+        `🔥 <b>كود الدخول الحالي والحي الآن للـ Google:</b>\n<code>${initialCode}</code>\n\n` +
+        `⚙️ مفتاح الأمان لتوليد الأكواد:\n<code>${cleanSecret.toUpperCase()}</code>`,
         {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [[{ text: "✅ قبول وضخ رصيد", callback_data: `app_task_${task._id}` }, { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` }]] }
@@ -639,7 +651,6 @@ bot.on("message", async (msg) => {
         const msgToDelete = user.stateMeta?.dataMessageId;
         
         if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
-        // تحديث: إتلاف الحساب وتغييره بالكامل لمنع تكراره
         if (accountId) await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true });
         
         user.state = null; user.stateMeta = null; await user.save();
@@ -658,7 +669,6 @@ bot.on("message", async (msg) => {
         
         if (!verification.valid) {
           if (msgToDelete) { bot.deleteMessage(chatId, msgToDelete).catch(() => {}); }
-          // تحديث: الحساب الذي يفشل في الفحص التلقائي يُتلف فوراً لتوليد حساب غيره
           await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true });
           user.state = null; user.stateMeta = null; await user.save();
           bot.sendMessage(chatId, `❌ <b>فشل الفحص:</b> ${escapeHtml(verification.reason)}`, MAIN_MENU).catch(() => {}); return;
@@ -673,10 +683,10 @@ bot.on("message", async (msg) => {
           `✅ <b>تم التحقق بنجاح والحساب قائم ومسجل فعلياً على جوجل!</b>\n\n` +
           `⚠️ <b>الخطوات التالية الإلزامية لاستحقاق الدفع وتأمين الحساب:</b>\n\n` +
           `1️⃣ توجه الآن فوراً إلى إعدادات حساب جوجل هذا، وقم بتفعيل ميزة <b>(التحقق بخطوتين - 2FA)</b>.\n` +
-          `2️⃣ استخرج <b>أحد الرموز الاحتياطية المكون من 8 أرقام (Backup Codes)</b> وأرسله هنا في الشات.\n` +
-          `3️⃣ 🚨 <b>تنبيه هام جداً:</b> يرجى <b>حذف تسجيل دخول الحساب من هاتفك أو متصفحك بالكامل فوراً</b> بعد إرسال الكود ليدخل الحساب في مرحلة المراجعة الرسمية بأمان.\n\n` +
-          `🛑 <i>بدون إرسال الرمز الاحتياطي، أو في حال اكتشاف استمرار فتح الحساب على جهازك أثناء الفحص، فلن تتمكن الإدارة من قبول حسابك أو دفع الـ $0.17 لك.</i>\n\n` + 
-          `💡 <i>إذا لم تكن تعرف طريقة التفعيل، اضغط على زر "❓ كيفية التفعيل" بالأسفل لمعرفة الخطوات بالتفصيل.</i>`, 
+          `2️⃣ اختر تطبيق Authenticator وانسخ <b>مفتاح الأمان النصي السري (Secret Key)</b> وأرسله هنا في الشات.\n` +
+          `3️⃣ 🚨 <b>تنبيه هام جداً:</b> يرجى <b>حذف تسجيل دخول الحساب من هاتفك أو متصفحك بالكامل فوراً</b> بعد إرسال المفتاح ليدخل الحساب في مرحلة المراجعة الرسمية بأمان.\n\n` +
+          `🛑 <i>بدون إرسال السيكرت الصحيح، فلن تتمكن الإدارة من قبول حسابك أو دفع الـ $0.17 لك.</i>\n\n` + 
+          `💡 <i>إذا لم تكن تعرف طريقة الربط، اضغط على زر "❓ كيفية التفعيل" بالأسفل لمعرفة الخطوات بالتفصيل.</i>`, 
           { 
             parse_mode: "HTML", 
             reply_markup: { 
@@ -821,13 +831,13 @@ bot.on("message", async (msg) => {
 
     if (text === "💬 مساعدة") {
       bot.sendMessage(chatId, 
-        `💬 <b>دليل تفعيل التحقق بخطوتين (2FA) واستخراج الكود الاحتياطي للحسابات:</b>\n\n` +
+        `💬 <b>دليل تفعيل التحقق بخطوتين (2FA) واستخراج السيكرت للحسابات:</b>\n\n` +
         `1️⃣ افتح إعدادات حساب Google الذي أنشأته عبر البوت.\n` +
         `2️⃣ انتقل إلى علامة تبويب <b>الأمان (Security)</b>.\n` +
-        `3️⃣ ابحث عن خيار <b>التحقق بخطوتين (2-Step Verification)</b> وقم بتفعيله برقم habtck.\n` +
-        `4️⃣ بعد انتهاء التفعيل، انزل لأسفل نفس الصفحة وابحث عن خيار <b>الرموز الاحتياطية (Backup Codes)</b>.\n` +
-        `5️⃣ اضغط على "الحصول على الرموز"، ثم قم بنسخ **رمز واحد فقط مكون من 8 أرقام** وأرسله للبوت ليتم تأكيد حسابك بنجاح وضخ رصيدك.\n\n` +
-        `📞 <b>للدعم الفني المباشر والاستفسارات الأخرى:</b> `, 
+        `3️⃣ ابحث عن خيار <b>التحقق بخطوتين (2-Step Verification)</b>.\n` +
+        `4️⃣ اختر تطبيق Authenticator واضغط على "إعداد" ليظهر لك الكود السري الخاص بالتطبيق.\n` +
+        `5️⃣ انسخ المفتاح السري وأرسله للبوت هنا مباشرة ليتم تأكيد حسابك بنجاح وضخ رصيدك.\n\n` +
+        `📞 <b>للدعم الفني المباشر والاستفسارات الأخرى:</b> @CX_GCP`, 
         { parse_mode: "HTML", disable_web_page_preview: false, ...MAIN_MENU }
       ).catch(() => {}); 
       return;
@@ -859,11 +869,6 @@ bot.on("callback_query", async (query) => {
       const task = await Task.findOne({ _id: taskId, status: "pending" });
       
       if (task) {
-        if (!task.backupCodes || decrypt(task.backupCodes).trim().length < 7) {
-          bot.sendMessage(adminChatId, `⚠️ <b>تنبيه أمني للأدمن:</b> لا يمكن قبول هذا الحساب لأن المستخدم لم يقم بتزويد البوت بالرمز الاحتياطي المطلوب!`, { parse_mode: "HTML" }).catch(() => {});
-          return;
-        }
-
         task.status = "approved";
         await task.save();
         
@@ -909,7 +914,7 @@ bot.on("callback_query", async (query) => {
 });
 
 mongoose.connect(MONGODB_URI)
-  .then(() => console.log("MongoDB active and Dashboard ready completely"))
+  .then(() => console.log("MongoDB active and Live 2FA Engine online successfully"))
   .catch((err) => console.error(err));
 
 http.createServer((req, res) => { res.end("Online Live Server ready"); }).listen(process.env.PORT || 8080);
