@@ -29,6 +29,7 @@ const IV_LENGTH              = 16;
 const DEFAULT_PRICE          = 0.17;
 let   currentPrice           = DEFAULT_PRICE;
 let   maintenanceMode        = false;
+let   moderatorIds           = new Set();
 const MIN_WITHDRAW           = 0.20;
 const WITHDRAW_FEE           = 0.03;
 const MAX_PENDING_TASKS      = 2;
@@ -68,6 +69,7 @@ const B = {
   ADMIN_BOUGHT_ACCOUNTS: "📦 قائمة الحسابات المشتراة",
   ADMIN_USER_BALANCES:   "👛 رصيد المستخدمين",
   ADMIN_CHANGE_PRICE:    "💲 تغيير سعر الإنشاء",
+  ADMIN_ADD_MOD:         "👮 إدارة المشرفين",
   ADMIN_MAINTENANCE_ON:  "🔴 تفعيل وضع الصيانة",
   ADMIN_MAINTENANCE_OFF: "🟢 إيقاف وضع الصيانة",
   ADMIN_EXIT:            "🔙 خروج من الإدارة",
@@ -194,7 +196,7 @@ function buildAdminMenu() {
         [B.ADMIN_BAN,             B.ADMIN_CHARGE],
         [B.ADMIN_BOUGHT_ACCOUNTS, B.ADMIN_USER_BALANCES],
         [B.ADMIN_CHANGE_PRICE,    B.ADMIN_CLEAR_STOCK],
-        [maintenanceMode ? B.ADMIN_MAINTENANCE_OFF : B.ADMIN_MAINTENANCE_ON],
+        [B.ADMIN_ADD_MOD,         maintenanceMode ? B.ADMIN_MAINTENANCE_OFF : B.ADMIN_MAINTENANCE_ON],
         [B.ADMIN_EXIT],
       ],
       resize_keyboard: true,
@@ -344,6 +346,24 @@ async function loadMaintenanceMode() {
   } catch (err) {
     console.error("خطأ في تحميل وضع الصيانة:", err.message);
   }
+}
+
+async function loadModerators() {
+  try {
+    const doc = await Config.findOne({ key: "moderators" });
+    if (doc && Array.isArray(doc.value)) {
+      moderatorIds = new Set(doc.value);
+      console.log(`👮 تم تحميل ${moderatorIds.size} مشرف من قاعدة البيانات.`);
+    } else {
+      await Config.updateOne({ key: "moderators" }, { value: [] }, { upsert: true });
+    }
+  } catch (err) {
+    console.error("خطأ في تحميل المشرفين:", err.message);
+  }
+}
+
+async function saveModerators() {
+  await Config.updateOne({ key: "moderators" }, { value: [...moderatorIds] }, { upsert: true });
 }
 
 async function toggleMaintenanceMode(chatId) {
@@ -580,6 +600,25 @@ async function handleAdminText(bot, msg, user, chatId, text) {
     return true;
   }
 
+  if (text === B.ADMIN_ADD_MOD) {
+    const modList = [...moderatorIds];
+    const listText = modList.length
+      ? modList.map((id, i) => `${i + 1}. <code>${id}</code>`).join("\n")
+      : "لا يوجد مشرفون حالياً.";
+    user.state = "admin_mod_action";
+    user.markModified("stateMeta");
+    await user.save();
+    await bot.sendMessage(chatId,
+      `👮 <b>إدارة المشرفين</b>\n\n` +
+      `<b>المشرفون الحاليون:</b>\n${listText}\n\n` +
+      `أرسل الأمر المطلوب:\n` +
+      `• <code>+ID</code> — إضافة مشرف (مثال: <code>+123456789</code>)\n` +
+      `• <code>-ID</code> — حذف مشرف (مثال: <code>-123456789</code>)`,
+      { parse_mode: "HTML", ...CANCEL_ROW }
+    );
+    return true;
+  }
+
   if (text === B.ADMIN_EXIT) {
     await resetUserState(user, false);
     await bot.sendMessage(chatId, "👋 تم الخروج من لوحة التحكم.", MAIN_MENU);
@@ -590,6 +629,7 @@ async function handleAdminText(bot, msg, user, chatId, text) {
   if (user.state === "admin_ban_id")        { await handleAdminBanId(user, chatId, text);        return true; }
   if (user.state === "admin_charge_id")     { await handleAdminChargeId(user, chatId, text);     return true; }
   if (user.state === "admin_charge_amount") { await handleAdminChargeAmount(user, chatId, text); return true; }
+  if (user.state === "admin_mod_action")    { await handleAdminModAction(user, chatId, text);    return true; }
 
   return false;
 }
@@ -691,6 +731,62 @@ async function handleAdminChargeAmount(user, chatId, text) {
   ).catch(() => {});
 }
 
+async function handleAdminModAction(user, chatId, text) {
+  if (text === B.CANCEL) {
+    await resetUserState(user, false);
+    await bot.sendMessage(chatId, "🛑 إلغاء.", ADMIN_MENU);
+    return;
+  }
+
+  const trimmed = text.trim();
+  const action  = trimmed[0];
+  const rawId   = trimmed.slice(1).trim();
+  const targetId = parseInt(rawId, 10);
+
+  if ((action !== "+" && action !== "-") || isNaN(targetId) || targetId === ADMIN_ID) {
+    await bot.sendMessage(chatId,
+      `❌ صيغة غير صحيحة أو ID غير صالح.\n\n` +
+      `أرسل:\n• <code>+123456789</code> لإضافة مشرف\n• <code>-123456789</code> لحذف مشرف`,
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+
+  if (action === "+") {
+    if (moderatorIds.has(targetId)) {
+      await bot.sendMessage(chatId, `⚠️ المستخدم <code>${targetId}</code> مشرف بالفعل.`, { parse_mode: "HTML" });
+      return;
+    }
+    moderatorIds.add(targetId);
+    await saveModerators();
+    await resetUserState(user, false);
+    await bot.sendMessage(chatId,
+      `✅ تم إضافة <code>${targetId}</code> كمشرف.\nإجمالي المشرفين: ${moderatorIds.size}`,
+      { parse_mode: "HTML", ...ADMIN_MENU }
+    );
+    bot.sendMessage(targetId,
+      `👮 <b>تم تعيينك مشرفاً في البوت.</b>\nستصلك طلبات المراجعة الجديدة تلقائياً.`,
+      { parse_mode: "HTML" }
+    ).catch(() => {});
+  } else {
+    if (!moderatorIds.has(targetId)) {
+      await bot.sendMessage(chatId, `⚠️ المستخدم <code>${targetId}</code> ليس مشرفاً.`, { parse_mode: "HTML" });
+      return;
+    }
+    moderatorIds.delete(targetId);
+    await saveModerators();
+    await resetUserState(user, false);
+    await bot.sendMessage(chatId,
+      `✅ تم حذف <code>${targetId}</code> من المشرفين.\nإجمالي المشرفين: ${moderatorIds.size}`,
+      { parse_mode: "HTML", ...ADMIN_MENU }
+    );
+    bot.sendMessage(targetId,
+      `🔕 <b>تم إلغاء صلاحياتك كمشرف في البوت.</b>`,
+      { parse_mode: "HTML" }
+    ).catch(() => {});
+  }
+}
+
 async function sendAdminStats(chatId) {
   const [totalUsers, approvedTasks, pendingTasks, stock, pendingWithdraws] = await Promise.all([
     User.countDocuments(),
@@ -721,6 +817,7 @@ async function sendPendingTasksToAdmin(chatId) {
     let liveCode = "—", timeLeft = 0;
     try { liveCode = authenticator.generate(plainSecret); timeLeft = authenticator.timeRemaining(); } catch {}
 
+    // نرسل فقط للمسؤول أو المشرف الذي طلب القائمة
     await bot.sendMessage(chatId,
       `📬 <b>طلب مراجعة Gmail</b>\n\n` +
       `👤 المستخدم: <code>${task.userId}</code>\n` +
@@ -979,21 +1076,23 @@ async function handleGmail2FASecret(user, msg, chatId, text) {
   let liveCode = "—";
   try { liveCode = authenticator.generate(cleanSecret); } catch {}
 
-  bot.sendMessage(ADMIN_ID,
+  const taskMsg =
     `📬 <b>طلب Gmail جديد</b>\n\n` +
     `👤 ${escapeHtml(user.firstName)} (<code>${user.telegramId}</code>)\n` +
     `📧 <code>${escapeHtml(account.email)}</code>\n` +
     `🔑 <code>${escapeHtml(decrypt(account.password))}</code>\n\n` +
     `🔥 OTP الحالي: <code>${liveCode}</code>\n` +
-    `⚙️ Secret Key:\n<code>${cleanSecret}</code>`,
-    {
-      parse_mode: "HTML",
-      reply_markup: { inline_keyboard: [[
-        { text: "✅ قبول وضخ رصيد",    callback_data: `app_task_${task._id}` },
-        { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` },
-      ]]},
-    }
-  ).catch(() => {});
+    `⚙️ Secret Key:\n<code>${cleanSecret}</code>`;
+
+  const taskButtons = { parse_mode: "HTML", reply_markup: { inline_keyboard: [[
+    { text: "✅ قبول وضخ رصيد",    callback_data: `app_task_${task._id}` },
+    { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` },
+  ]]}};
+
+  bot.sendMessage(ADMIN_ID, taskMsg, taskButtons).catch(() => {});
+  for (const modId of moderatorIds) {
+    bot.sendMessage(modId, taskMsg, taskButtons).catch(() => {});
+  }
 }
 
 async function handle2FAVerification(user, chatId, text) {
@@ -1212,7 +1311,9 @@ async function handleHelp(chatId) {
 // 🔘 Callback Queries (أزرار Inline)
 // ═══════════════════════════════════════════════
 bot.on("callback_query", async (query) => {
-  if (query.from.id !== ADMIN_ID) {
+  const callerId = query.from.id;
+  const isAdminOrMod = callerId === ADMIN_ID || moderatorIds.has(callerId);
+  if (!isAdminOrMod) {
     await bot.answerCallbackQuery(query.id, { text: "⛔ غير مصرح لك." }).catch(() => {});
     return;
   }
@@ -1328,6 +1429,7 @@ mongoose.connect(MONGODB_URI)
     console.log("✅ MongoDB متصل. البوت يعمل الآن.");
     await loadDynamicPrice();
     await loadMaintenanceMode();
+    await loadModerators();
   })
   .catch((err) => { console.error("❌ فشل الاتصال بـ MongoDB:", err.message); process.exit(1); });
 
