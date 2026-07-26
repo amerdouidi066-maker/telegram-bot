@@ -3,7 +3,6 @@
 const TelegramBot    = require("node-telegram-bot-api");
 const mongoose       = require("mongoose");
 const http           = require("http");
-const https          = require("https");
 const crypto         = require("crypto");
 const { authenticator } = require("otplib");
 
@@ -14,7 +13,6 @@ const BOT_TOKEN      = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
 const MONGODB_URI    = process.env.MONGODB_URI;
 const ADMIN_ID       = parseInt(process.env.ADMIN_ID, 10);
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
-// اختياري: معرف القناة لنشر تأكيدات السحب (مثال: -1001234567890 أو @mychannel)
 const CHANNEL_ID     = process.env.CHANNEL_ID || null;
 
 if (!BOT_TOKEN)      throw new Error("BOT_TOKEN مطلوب في متغيرات البيئة");
@@ -28,34 +26,32 @@ if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
 // 📐 ثوابت النظام
 // ═══════════════════════════════════════════════
 const IV_LENGTH              = 16;
-const DEFAULT_PRICE          = 0.17;   // السعر الافتراضي عند أول تشغيل
-let   currentPrice           = DEFAULT_PRICE; // يُحدَّث من DB عند التشغيل وعند التغيير
-let   maintenanceMode        = false;  // وضع الصيانة — يُحمَّل من DB عند التشغيل
+const DEFAULT_PRICE          = 0.17;
+let   currentPrice           = DEFAULT_PRICE;
+let   maintenanceMode        = false;
 const MIN_WITHDRAW           = 0.20;
 const WITHDRAW_FEE           = 0.03;
 const MAX_PENDING_TASKS      = 2;
-const MAX_VERIFY_RETRIES     = 3;       // ✅ جديد: أقصى عدد محاولات للتحقق
 const PROCESSING_TIMEOUT_MS  = 15_000;
 const CLEANUP_INTERVAL_MS    = 30 * 60 * 1000;
 const SESSION_TIMEOUT_MS     = 2  * 60 * 60 * 1000;
-const LEADERBOARD_SIZE       = 10;     // ✅ جديد: حجم قائمة المتصدرين
+const LEADERBOARD_SIZE       = 10;
 const BEP20_REGEX            = /^0x[a-fA-F0-9]{40}$/;
 
-/** أسماء الأزرار — مكان واحد فقط يُعدَّل */
+/** أسماء الأزرار */
 const B = {
   // ─── المستخدم ───
   CREATE_GMAIL:          "➕ أنشئ حساب Gmail جديد",
   MY_ACCOUNTS:           "📋 حساباتي",
   BALANCE:               "💰 الرصيد",
   REFERRALS:             "👥 الإحالات الخاصة بي",
-  LEADERBOARD:           "🏆 المتصدرون",          // ✅ جديد
+  LEADERBOARD:           "🏆 المتصدرون",
   SETTINGS:              "⚙️ الإعدادات",
   HELP:                  "💬 مساعدة",
   BACK:                  "🔙 رجوع",
   CANCEL:                "❌ إلغاء العملية",
   CONFIRMED_CREATE:      "✅ تم التفعيل والإنشاء",
   CANCEL_CREATE:         "❌ إلغاء إنشاء الحساب",
-  RETRY_VERIFY:          "🔄 أعد التحقق",
   SKIP_SCREENSHOT:       "⏭️ متابعة بدون لقطة شاشة",
   BALANCE_LOG:           "📝 سجل الرصيد",
   WITHDRAW:              "💳 سحب",
@@ -89,7 +85,7 @@ const userSchema = new mongoose.Schema({
   referralCode:  { type: String, unique: true },
   referredBy:    { type: Number, default: null },
   referralCount: { type: Number, default: 0 },
-  totalEarned:   { type: Number, default: 0 },   // ✅ جديد: إجمالي ما كسبه طوال الوقت
+  totalEarned:   { type: Number, default: 0 },
   state:         { type: String, default: null },
   stateMeta:     { type: mongoose.Schema.Types.Mixed, default: null },
   banned:        { type: Boolean, default: false },
@@ -115,7 +111,7 @@ const taskSchema = new mongoose.Schema({
   accountEmail:     { type: String, required: true },
   accountId:        { type: mongoose.Schema.Types.ObjectId, ref: "Account" },
   google2FASecret:  { type: String, default: "" },
-  screenshotFileId: { type: String, default: null },  // ✅ جديد: لقطة شاشة الـ Inbox
+  screenshotFileId: { type: String, default: null },
   status:           { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
   submittedAt:      { type: Date, default: Date.now },
 }, { timestamps: true });
@@ -130,7 +126,6 @@ const withdrawSchema = new mongoose.Schema({
   status:         { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
 }, { timestamps: true });
 
-// ✅ جديد: إعدادات النظام الديناميكية (يُخزّن فيها السعر وأي إعداد قابل للتغيير)
 const configSchema = new mongoose.Schema({
   key:   { type: String, required: true, unique: true },
   value: { type: mongoose.Schema.Types.Mixed, required: true },
@@ -150,22 +145,13 @@ const MAIN_MENU = {
     keyboard: [
       [B.CREATE_GMAIL,  B.MY_ACCOUNTS],
       [B.BALANCE,       B.REFERRALS],
-      [B.LEADERBOARD,   B.SETTINGS],   // ✅ أُضيف زر المتصدرين
+      [B.LEADERBOARD,   B.SETTINGS],
       [B.HELP],
     ],
     resize_keyboard: true,
   },
 };
 
-// قائمة إعادة المحاولة عند فشل التحقق
-const RETRY_VERIFY_MENU = {
-  reply_markup: {
-    keyboard: [[B.RETRY_VERIFY], [B.CANCEL_CREATE]],
-    resize_keyboard: true,
-  },
-};
-
-// ✅ جديد: قائمة طلب لقطة شاشة الـ Inbox كدليل إضافي
 const SCREENSHOT_MENU = {
   reply_markup: {
     keyboard: [[B.SKIP_SCREENSHOT], [B.CANCEL_CREATE]],
@@ -208,7 +194,6 @@ const NETWORK_MENU = {
   },
 };
 
-// ADMIN_MENU يُولَّد ديناميكياً ليعكس حالة وضع الصيانة الحالية
 function buildAdminMenu() {
   return {
     reply_markup: {
@@ -226,8 +211,6 @@ function buildAdminMenu() {
   };
 }
 
-// ADMIN_MENU ثابت للأماكن التي لا تحتاج تحديثاً فورياً
-// استخدم buildAdminMenu() عند إرسال لوحة الأدمن
 const ADMIN_MENU = buildAdminMenu();
 
 const CANCEL_ROW        = { reply_markup: { keyboard: [[B.CANCEL]], resize_keyboard: true } };
@@ -341,7 +324,6 @@ async function cleanupStaleSessions() {
   }
 }
 
-// تحميل السعر من DB عند التشغيل
 async function loadDynamicPrice() {
   try {
     const doc = await Config.findOne({ key: "accountPrice" });
@@ -358,7 +340,6 @@ async function loadDynamicPrice() {
   }
 }
 
-// تحميل حالة وضع الصيانة من DB عند التشغيل
 async function loadMaintenanceMode() {
   try {
     const doc = await Config.findOne({ key: "maintenanceMode" });
@@ -374,7 +355,6 @@ async function loadMaintenanceMode() {
   }
 }
 
-// تبديل وضع الصيانة وحفظه في DB وإشعار جميع المستخدمين النشطين
 async function toggleMaintenanceMode(chatId) {
   maintenanceMode = !maintenanceMode;
   await Config.updateOne({ key: "maintenanceMode" }, { value: maintenanceMode }, { upsert: true });
@@ -385,7 +365,6 @@ async function toggleMaintenanceMode(chatId) {
 
   await bot.sendMessage(chatId, statusText, { parse_mode: "HTML", ...buildAdminMenu() });
 
-  // إشعار المستخدمين النشطين (آخر 24 ساعة) بحالة الصيانة
   if (maintenanceMode) {
     try {
       const since    = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -396,123 +375,12 @@ async function toggleMaintenanceMode(chatId) {
         `نعتذر عن أي إزعاج! 🙏`;
       for (const u of actives) {
         bot.sendMessage(u.telegramId, msg, { parse_mode: "HTML" }).catch(() => {});
-        await new Promise(r => setTimeout(r, 50)); // تجنب flood limit
+        await new Promise(r => setTimeout(r, 50));
       }
     } catch (err) {
       console.error("خطأ في إشعار المستخدمين:", err.message);
     }
   }
-}
-
-// ═══════════════════════════════════════════════
-// 🌐 نظام التحقق المزدوج من وجود Gmail
-// ═══════════════════════════════════════════════
-
-/**
- * الفحص الأول (Primary): Google InputValidator
- * errorMessage فارغ  → الاسم متاح → الحساب غير موجود → false
- * errorMessage موجود → الاسم محجوز → الحساب موجود    → true
- * null → تعذّر الفحص (inconclusive)
- */
-function checkInputValidator(username) {
-  return new Promise((resolve) => {
-    const body = JSON.stringify({ username, locale: "en_US" });
-    const req  = https.request({
-      hostname: "accounts.google.com",
-      port: 443,
-      path: "/InputValidator?resource=SignUp",
-      method: "POST",
-      headers: {
-        "Content-Type":   "application/json",
-        "Content-Length": Buffer.byteLength(body),
-        "User-Agent":     "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-      timeout: 9000,
-    }, (res) => {
-      const chunks = [];
-      res.on("data", (c) => chunks.push(c));
-      res.on("end", () => {
-        try {
-          const json  = JSON.parse(Buffer.concat(chunks).toString());
-          const err   = json?.inputErrors?.username?.errorMessage;
-          resolve(err === "" ? false : err !== undefined ? true : null);
-        } catch { resolve(null); }
-      });
-    });
-    req.on("timeout", () => { req.destroy(); resolve(null); });
-    req.on("error",   () => resolve(null));
-    req.write(body);
-    req.end();
-  });
-}
-
-/**
- * الفحص الثاني (Secondary): Google Avatar Lookup (gxlu)
- * HTTP 200 → الحساب موجود → true
- * HTTP 404 أو redirect → قد لا يكون موجوداً → false
- * فشل الاتصال → inconclusive → null
- */
-function checkGmailAvatar(email) {
-  return new Promise((resolve) => {
-    const req = https.request({
-      hostname: "mail.google.com",
-      path:     `/mail/gxlu?email=${encodeURIComponent(email)}`,
-      method:   "HEAD",
-      headers:  { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-      timeout:  7000,
-    }, (res) => {
-      // 200 = جوجل وجد الحساب وأعاد الأفاتار
-      resolve(res.statusCode === 200 ? true : false);
-    });
-    req.on("timeout", () => { req.destroy(); resolve(null); });
-    req.on("error",   () => resolve(null));
-    req.end();
-  });
-}
-
-/**
- * التحقق المزدوج الموحّد:
- * ─ كلاهما يؤكد الوجود  → ✅ valid (أعلى ثقة)
- * ─ الأول يؤكد الوجود   → ✅ valid (الأول أكثر دقة)
- * ─ الأول غير قاطع لكن الثاني يؤكد → ✅ valid (إفادة الشك للمستخدم)
- * ─ الأول يؤكد الغياب والثاني أيضاً → ❌ invalid
- * ─ الأول يؤكد الغياب لكن الثاني غير قاطع → ❌ invalid (الأول أقوى)
- * ─ كلاهما غير قاطع    → ✅ مرور احتياطي
- */
-async function verifyEmail(email) {
-  const emailRegex = /^[a-z0-9]([a-z0-9._]{4,28}[a-z0-9])@gmail\.com$/i;
-  if (!emailRegex.test(email)) {
-    return { valid: false, reason: "صيغة البريد الإلكتروني غير صالحة.", confidence: "high" };
-  }
-
-  const username = email.split("@")[0];
-
-  // تشغيل الفحصين بالتوازي لتوفير الوقت
-  const [primary, secondary] = await Promise.all([
-    checkInputValidator(username),
-    checkGmailAvatar(email),
-  ]);
-
-  // ─── منطق الدمج ───
-  if (primary === true) {
-    return { valid: true,  reason: "✅ تأكيد مزدوج: الحساب موجود فعلاً على جوجل.", confidence: "high" };
-  }
-  if (primary === false && secondary === false) {
-    return { valid: false, reason: "الحساب غير موجود على جوجل (تم التحقق بطريقتين).", confidence: "high" };
-  }
-  if (primary === false && secondary === true) {
-    // تعارض: أعطِ المستخدم فرصة (قد يكون تأخر في الانتشار)
-    return { valid: true,  reason: "⚠️ تحقق جزئي: يُرجى التأكد من إتمام الإنشاء.", confidence: "medium" };
-  }
-  if (primary === null && secondary === true) {
-    return { valid: true,  reason: "✅ الحساب موجود (تحقق الفحص الثانوي).", confidence: "medium" };
-  }
-  if (primary === null && secondary === false) {
-    return { valid: false, reason: "الحساب لا يبدو موجوداً. تأكد من إتمام الإنشاء.", confidence: "medium" };
-  }
-  // كلاهما null = مشكلة اتصال
-  return { valid: true, reason: "⚠️ تعذّر التحقق من الشبكة، مرور احتياطي.", confidence: "low" };
 }
 
 // ═══════════════════════════════════════════════
@@ -524,7 +392,7 @@ const processingUsers = new Set();
 bot.setMyCommands([
   { command: "start",       description: "🚀 ابدأ استخدام البوت" },
   { command: "withdraw",    description: "💸 طلب سحب" },
-  { command: "leaderboard", description: "🏆 قائمة المتصدرين" },  // ✅ جديد
+  { command: "leaderboard", description: "🏆 قائمة المتصدرين" },
   { command: "admin",       description: "⚙️ لوحة الإدارة (للمسؤول فقط)" },
 ]).catch((err) => console.error("خطأ في تعيين الأوامر:", err.message));
 
@@ -588,7 +456,6 @@ bot.onText(/\/admin/, async (msg) => {
 // 💬 معالج الرسائل الرئيسي
 // ═══════════════════════════════════════════════
 bot.on("message", async (msg) => {
-  // نقبل نصوص وصور فقط (الصور مطلوبة لخطوة لقطة الشاشة)
   const hasText  = Boolean(msg.text && !msg.text.startsWith("/"));
   const hasPhoto = Boolean(msg.photo?.length);
   if (!hasText && !hasPhoto) return;
@@ -609,7 +476,6 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // ─── وضع الصيانة — يمنع المستخدمين العاديين فقط ───
     if (maintenanceMode && userId !== ADMIN_ID) {
       await bot.sendMessage(chatId,
         `🔧 <b>البوت في وضع الصيانة حالياً</b>\n\n` +
@@ -620,7 +486,6 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    // ─── لوحة تحكم الأدمن (نص فقط) ───
     if (userId === ADMIN_ID && hasText) {
       const handled = await handleAdminText(bot, msg, user, chatId, text);
       if (handled) return;
@@ -632,9 +497,8 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    if (!hasText) return; // ما تبقى يحتاج نصاً
+    if (!hasText) return;
 
-    // ─── حالات المستخدم المتتابعة ───
     if (text === B.BACK) {
       await resetUserState(user, false);
       await bot.sendMessage(chatId, "👋 القائمة الرئيسية.", MAIN_MENU);
@@ -649,13 +513,12 @@ bot.on("message", async (msg) => {
     if (user.state === "awaiting_withdraw_amount")    { await handleWithdrawAmount(user, chatId, text);      return; }
     if (user.state === "awaiting_withdraw_address")   { await handleWithdrawAddress(user, chatId, text);     return; }
 
-    // ─── أزرار القائمة الرئيسية ───
     if (text === B.CREATE_GMAIL)    { await handleCreateGmail(user, chatId);    return; }
     if (text === B.MY_ACCOUNTS)     { await handleMyAccounts(user, chatId);     return; }
     if (text === B.BALANCE)         { await handleBalance(user, chatId);        return; }
     if (text === B.BALANCE_LOG)     { await handleBalanceLog(user, chatId);     return; }
     if (text === B.REFERRALS)       { await handleReferrals(user, chatId);      return; }
-    if (text === B.LEADERBOARD)     { await handleLeaderboard(chatId);          return; } // ✅ جديد
+    if (text === B.LEADERBOARD)     { await handleLeaderboard(chatId);          return; }
     if (text === B.SETTINGS)        { await handleSettings(user, chatId);       return; }
     if (text === B.TWO_FA_SETTINGS) { await handleTwoFASettings(user, chatId); return; }
     if (text === B.HELP)            { await handleHelp(chatId);                 return; }
@@ -676,13 +539,12 @@ bot.on("message", async (msg) => {
 
 async function handleAdminText(bot, msg, user, chatId, text) {
 
-  if (text === B.ADMIN_STATS)           { await sendAdminStats(chatId);             return true; }
-  if (text === B.ADMIN_PENDING)         { await sendPendingTasksToAdmin(chatId);    return true; }
+  if (text === B.ADMIN_STATS)           { await sendAdminStats(chatId);              return true; }
+  if (text === B.ADMIN_PENDING)         { await sendPendingTasksToAdmin(chatId);     return true; }
   if (text === B.ADMIN_WITHDRAWS)       { await sendPendingWithdrawsToAdmin(chatId); return true; }
-  if (text === B.ADMIN_BOUGHT_ACCOUNTS) { await sendBoughtAccountsToAdmin(chatId); return true; }
-  if (text === B.ADMIN_USER_BALANCES)   { await sendUserBalancesToAdmin(chatId);    return true; }
+  if (text === B.ADMIN_BOUGHT_ACCOUNTS) { await sendBoughtAccountsToAdmin(chatId);  return true; }
+  if (text === B.ADMIN_USER_BALANCES)   { await sendUserBalancesToAdmin(chatId);     return true; }
 
-  // ─── وضع الصيانة ───
   if (text === B.ADMIN_MAINTENANCE_ON || text === B.ADMIN_MAINTENANCE_OFF) {
     await toggleMaintenanceMode(chatId);
     return true;
@@ -847,7 +709,6 @@ async function handleAdminChargeAmount(user, chatId, text) {
   ).catch(() => {});
 }
 
-// ─── إحصائيات الأدمن ───
 async function sendAdminStats(chatId) {
   const [totalUsers, approvedTasks, pendingTasks, stock, pendingWithdraws] = await Promise.all([
     User.countDocuments(),
@@ -867,7 +728,6 @@ async function sendAdminStats(chatId) {
   );
 }
 
-// ─── الحسابات المعلقة ───
 async function sendPendingTasksToAdmin(chatId) {
   const pending = await Task.find({ status: "pending" });
   if (!pending.length) { await bot.sendMessage(chatId, "🎉 لا توجد طلبات معلقة حالياً.", ADMIN_MENU); return; }
@@ -903,7 +763,6 @@ async function sendPendingTasksToAdmin(chatId) {
   }
 }
 
-// ─── طلبات السحب المعلقة ───
 async function sendPendingWithdrawsToAdmin(chatId) {
   const pending = await Withdrawal.find({ status: "pending" });
   if (!pending.length) { await bot.sendMessage(chatId, "🎉 لا توجد طلبات سحب معلقة حالياً.", ADMIN_MENU); return; }
@@ -926,9 +785,6 @@ async function sendPendingWithdrawsToAdmin(chatId) {
   }
 }
 
-// ═══════════════════════════════════════════════
-// ✅ جديد: قائمة الحسابات المشتراة (للأدمن)
-// ═══════════════════════════════════════════════
 async function sendBoughtAccountsToAdmin(chatId) {
   const approved = await Task.find({ status: "approved" })
     .sort({ updatedAt: -1 })
@@ -951,7 +807,6 @@ async function sendBoughtAccountsToAdmin(chatId) {
            `   👤 ID: <code>${t.userId}</code> | 💵 $${fmt(t.amount)} | 📅 ${date}\n\n`;
   }
 
-  // تقسيم الرسالة إذا كانت طويلة
   if (txt.length > 3800) {
     const half = Math.floor(approved.length / 2);
     await bot.sendMessage(chatId, txt.slice(0, txt.indexOf(`<b>${half + 1}.`)), { parse_mode: "HTML" }).catch(() => {});
@@ -961,9 +816,6 @@ async function sendBoughtAccountsToAdmin(chatId) {
   }
 }
 
-// ═══════════════════════════════════════════════
-// ✅ جديد: رصيد المستخدمين (للأدمن)
-// ═══════════════════════════════════════════════
 async function sendUserBalancesToAdmin(chatId) {
   const users = await User.find({ balance: { $gt: 0 } })
     .sort({ balance: -1 })
@@ -978,8 +830,8 @@ async function sendUserBalancesToAdmin(chatId) {
   let txt = `👛 <b>أعلى 25 مستخدم برصيد:</b>\n\n`;
 
   users.forEach((u, i) => {
-    const rank = medals[i] ?? `${i + 1}.`;
-    const name = escapeHtml(u.firstName);
+    const rank     = medals[i] ?? `${i + 1}.`;
+    const name     = escapeHtml(u.firstName);
     const user_tag = u.username ? `@${escapeHtml(u.username)}` : `<code>${u.telegramId}</code>`;
     txt += `${rank} ${name} (${user_tag})\n` +
            `   💰 الرصيد: <b>$${fmt(u.balance)}</b> | إجمالي المكسب: $${fmt(u.totalEarned)}\n\n`;
@@ -988,9 +840,6 @@ async function sendUserBalancesToAdmin(chatId) {
   await bot.sendMessage(chatId, txt, { parse_mode: "HTML", ...ADMIN_MENU });
 }
 
-// ═══════════════════════════════════════════════
-// ✅ جديد: تغيير سعر الإنشاء (للأدمن)
-// ═══════════════════════════════════════════════
 async function handleAdminChangePrice(user, chatId, text) {
   if (text === B.CANCEL) {
     await resetUserState(user, false);
@@ -1059,12 +908,12 @@ async function handleCreateGmail(user, chatId) {
 
   await User.findOneAndUpdate(
     { telegramId: user.telegramId },
-    { stateMeta: { accountId: account._id.toString(), dataMessageId: sentMsg.message_id, verifyRetries: 0 } }
+    { stateMeta: { accountId: account._id.toString(), dataMessageId: sentMsg.message_id } }
   );
 }
 
 // ═══════════════════════════════════════════════
-// ✅ جديد: التحقق مع دعم إعادة المحاولة
+// ✅ handleConfirmation — بدون تحقق من جوجل
 // ═══════════════════════════════════════════════
 async function handleConfirmation(user, msg, chatId, text) {
   if (text === B.BACK || text === B.CANCEL_CREATE) {
@@ -1074,9 +923,7 @@ async function handleConfirmation(user, msg, chatId, text) {
     return;
   }
 
-  // زر إعادة المحاولة — يُعيد التحقق دون تغيير بيانات الحساب
-  const isRetry = text === B.RETRY_VERIFY;
-  if (text !== B.CONFIRMED_CREATE && !isRetry) return;
+  if (text !== B.CONFIRMED_CREATE) return;
 
   const accountId = user.stateMeta?.accountId;
   const account   = await Account.findById(accountId);
@@ -1086,63 +933,80 @@ async function handleConfirmation(user, msg, chatId, text) {
     return;
   }
 
-  const verifyMsg = await bot.sendMessage(chatId, "🔍 <b>جاري التحقق مع سيرفرات جوجل...</b>", { parse_mode: "HTML" });
-  const { valid, reason, confidence } = await verifyEmail(account.email);
-  await bot.deleteMessage(chatId, verifyMsg.message_id).catch(() => {});
-
-  if (!valid) {
-    // ✅ جديد: إعادة المحاولة بدلاً من إتلاف الحساب فوراً
-    const retries = (user.stateMeta?.verifyRetries ?? 0) + 1;
-
-    if (retries >= MAX_VERIFY_RETRIES) {
-      // استنفدت المحاولات — أتلف الحساب
-      await bot.deleteMessage(chatId, user.stateMeta?.dataMessageId).catch(() => {});
-      await Account.findByIdAndUpdate(accountId, { assigned: true, isWasted: true });
-      await resetUserState(user, false);
-      await bot.sendMessage(chatId,
-        `❌ <b>تجاوزت الحد الأقصى للمحاولات (${MAX_VERIFY_RETRIES}).</b>\n` +
-        `سيتم تخصيص حساب جديد لك عند المحاولة القادمة.`,
-        { parse_mode: "HTML", ...MAIN_MENU }
-      );
-      return;
-    }
-
-    // لا تزال هناك محاولات
-    user.stateMeta = { ...user.stateMeta, verifyRetries: retries };
-    user.markModified("stateMeta");
-    await user.save();
-
-    const remaining = MAX_VERIFY_RETRIES - retries;
-    await bot.sendMessage(chatId,
-      `⚠️ <b>الحساب لم يُنشأ بعد على جوجل!</b>\n\n` +
-      `${escapeHtml(reason)}\n\n` +
-      `📌 يرجى إنشاء الحساب بالبيانات المعطاة أولاً ثم اضغط <b>🔄 أعد التحقق</b>.\n\n` +
-      `🔁 المحاولات المتبقية: <b>${remaining}</b>`,
-      { parse_mode: "HTML", ...RETRY_VERIFY_MENU }
-    );
-    return;
-  }
-
-  // ✅ التحقق نجح — تابع لخطوة لقطة الشاشة أولاً
+  // حذف رسالة بيانات الحساب والانتقال مباشرة لخطوة لقطة الشاشة
   await bot.deleteMessage(chatId, user.stateMeta?.dataMessageId).catch(() => {});
 
   user.state = "awaiting_gmail_screenshot";
   user.markModified("stateMeta");
   await user.save();
 
-  const confidenceNote = confidence === "medium"
-    ? `\n⚠️ <i>ملاحظة: ${escapeHtml(reason)}</i>\n`
-    : "";
-
   await bot.sendMessage(chatId,
-    `✅ <b>تم التحقق! الحساب موجود على جوجل.</b>${confidenceNote}\n\n` +
-    `📸 <b>الخطوة التالية — إرسال لقطة شاشة:</b>\n\n` +
+    `📸 <b>أرسل لقطة شاشة للحساب الجديد:</b>\n\n` +
     `افتح Gmail الجديد من المتصفح أو التطبيق، ثم <b>التقط صورة للصفحة الرئيسية</b> تُظهر:\n` +
     `• عنوان البريد في أعلى الصفحة\n` +
     `• صندوق الوارد (حتى لو فارغاً)\n\n` +
     `📌 <i>اللقطة دليل قبول إضافي يُسرّع موافقة الإدارة.</i>\n` +
     `يمكنك تخطي هذه الخطوة بالضغط على الزر أدناه.`,
     { parse_mode: "HTML", ...SCREENSHOT_MENU }
+  );
+}
+
+// ─── معالج لقطة شاشة Gmail ───
+async function handleGmailScreenshot(user, msg, chatId, text) {
+  const hasPhoto = Boolean(msg.photo?.length);
+
+  if (text === B.CANCEL_CREATE) {
+    await resetUserState(user, true);
+    await bot.sendMessage(chatId, "👋 تم الإلغاء.", MAIN_MENU);
+    return;
+  }
+
+  if (text === B.SKIP_SCREENSHOT) {
+    user.state = "awaiting_gmail_backup_codes";
+    user.markModified("stateMeta");
+    await user.save();
+    await bot.sendMessage(chatId,
+      `⚠️ <b>تم تخطي لقطة الشاشة.</b>\n\n` +
+      `⚙️ <b>الخطوة التالية — مفتاح الـ 2FA (إلزامي):</b>\n\n` +
+      `1️⃣ توجه لإعدادات الحساب ← الأمان ← التحقق بخطوتين.\n` +
+      `2️⃣ اختر تطبيق Authenticator واضغط <b>"لا يمكن مسحه ضوئياً"</b>.\n` +
+      `3️⃣ انسخ <b>المفتاح السري (Secret Key)</b> وأرسله هنا.\n` +
+      `4️⃣ 🚨 احذف تسجيل الدخول من هاتفك فوراً بعد الإرسال.\n\n` +
+      `🛑 <i>بدون المفتاح الصحيح لن يتم قبول الحساب أو دفع $${currentPrice}.</i>`,
+      { parse_mode: "HTML", ...TWO_FA_GMAIL_MENU }
+    );
+    return;
+  }
+
+  if (!hasPhoto) {
+    await bot.sendMessage(chatId,
+      `📸 يرجى إرسال <b>صورة (لقطة شاشة)</b> لصندوق الوارد Gmail،\n` +
+      `أو اضغط <b>${B.SKIP_SCREENSHOT}</b> للتخطي.`,
+      { parse_mode: "HTML", ...SCREENSHOT_MENU }
+    );
+    return;
+  }
+
+  const fileId    = msg.photo[msg.photo.length - 1].file_id;
+  const accountId = user.stateMeta?.accountId;
+  if (accountId) {
+    user.stateMeta = { ...user.stateMeta, screenshotFileId: fileId };
+    user.markModified("stateMeta");
+  }
+
+  user.state = "awaiting_gmail_backup_codes";
+  user.markModified("stateMeta");
+  await user.save();
+
+  await bot.sendMessage(chatId,
+    `✅ <b>تم استلام لقطة الشاشة!</b>\n\n` +
+    `⚙️ <b>الخطوة الأخيرة — مفتاح الـ 2FA (إلزامي):</b>\n\n` +
+    `1️⃣ توجه لإعدادات الحساب ← الأمان ← التحقق بخطوتين.\n` +
+    `2️⃣ اختر تطبيق Authenticator واضغط <b>"لا يمكن مسحه ضوئياً"</b>.\n` +
+    `3️⃣ انسخ <b>المفتاح السري (Secret Key)</b> وأرسله هنا.\n` +
+    `4️⃣ 🚨 احذف تسجيل الدخول من هاتفك فوراً بعد الإرسال.\n\n` +
+    `🛑 <i>بدون المفتاح الصحيح لن يتم قبول الحساب أو دفع $${currentPrice}.</i>`,
+    { parse_mode: "HTML", ...TWO_FA_GMAIL_MENU }
   );
 }
 
@@ -1184,9 +1048,12 @@ async function handleGmail2FASecret(user, msg, chatId, text) {
   if (!account) { await resetUserState(user, false); await bot.sendMessage(chatId, "❌ الحساب غير متوفر.", MAIN_MENU); return; }
 
   const task = await Task.create({
-    userId: user.telegramId, amount: currentPrice,
-    accountEmail: account.email, accountId: account._id,
-    google2FASecret: encrypt(cleanSecret), submittedAt: new Date(),
+    userId:          user.telegramId,
+    amount:          currentPrice,
+    accountEmail:    account.email,
+    accountId:       account._id,
+    google2FASecret: encrypt(cleanSecret),
+    submittedAt:     new Date(),
     ...(user.stateMeta?.screenshotFileId ? { screenshotFileId: user.stateMeta.screenshotFileId } : {}),
   });
 
@@ -1214,71 +1081,6 @@ async function handleGmail2FASecret(user, msg, chatId, text) {
       ]]},
     }
   ).catch(() => {});
-}
-
-// ─── معالج لقطة شاشة Gmail (خطوة جديدة بعد التحقق) ───
-async function handleGmailScreenshot(user, msg, chatId, text) {
-  const hasPhoto = Boolean(msg.photo?.length);
-
-  if (text === B.CANCEL_CREATE) {
-    await resetUserState(user, true);
-    await bot.sendMessage(chatId, "👋 تم الإلغاء.", MAIN_MENU);
-    return;
-  }
-
-  if (text === B.SKIP_SCREENSHOT) {
-    // المستخدم تخطّى — ننتقل لخطوة الـ 2FA مباشرة
-    user.state = "awaiting_gmail_backup_codes";
-    user.markModified("stateMeta");
-    await user.save();
-    await bot.sendMessage(chatId,
-      `⚠️ <b>تم تخطي لقطة الشاشة.</b>\n\n` +
-      `⚙️ <b>الخطوة التالية — مفتاح الـ 2FA (إلزامي):</b>\n\n` +
-      `1️⃣ توجه لإعدادات الحساب ← الأمان ← التحقق بخطوتين.\n` +
-      `2️⃣ اختر تطبيق Authenticator واضغط <b>"لا يمكن مسحه ضوئياً"</b>.\n` +
-      `3️⃣ انسخ <b>المفتاح السري (Secret Key)</b> وأرسله هنا.\n` +
-      `4️⃣ 🚨 احذف تسجيل الدخول من هاتفك فوراً بعد الإرسال.\n\n` +
-      `🛑 <i>بدون المفتاح الصحيح لن يتم قبول الحساب أو دفع $${currentPrice}.</i>`,
-      { parse_mode: "HTML", ...TWO_FA_GMAIL_MENU }
-    );
-    return;
-  }
-
-  if (!hasPhoto) {
-    // أرسل نصاً عشوائياً — ذكّره بالصورة
-    await bot.sendMessage(chatId,
-      `📸 يرجى إرسال <b>صورة (لقطة شاشة)</b> لصندوق الوارد Gmail،\n` +
-      `أو اضغط <b>${B.SKIP_SCREENSHOT}</b> للتخطي.`,
-      { parse_mode: "HTML", ...SCREENSHOT_MENU }
-    );
-    return;
-  }
-
-  // ─── استلام الصورة ───
-  const fileId = msg.photo[msg.photo.length - 1].file_id; // أعلى جودة
-
-  // حفظ fileId في Task (إن كان موجوداً بالفعل) أو stateMeta مؤقتاً
-  const accountId = user.stateMeta?.accountId;
-  if (accountId) {
-    // حفظ مؤقت في stateMeta لنقله عند إنشاء Task
-    user.stateMeta = { ...user.stateMeta, screenshotFileId: fileId };
-    user.markModified("stateMeta");
-  }
-
-  user.state = "awaiting_gmail_backup_codes";
-  user.markModified("stateMeta");
-  await user.save();
-
-  await bot.sendMessage(chatId,
-    `✅ <b>تم استلام لقطة الشاشة!</b>\n\n` +
-    `⚙️ <b>الخطوة الأخيرة — مفتاح الـ 2FA (إلزامي):</b>\n\n` +
-    `1️⃣ توجه لإعدادات الحساب ← الأمان ← التحقق بخطوتين.\n` +
-    `2️⃣ اختر تطبيق Authenticator واضغط <b>"لا يمكن مسحه ضوئياً"</b>.\n` +
-    `3️⃣ انسخ <b>المفتاح السري (Secret Key)</b> وأرسله هنا.\n` +
-    `4️⃣ 🚨 احذف تسجيل الدخول من هاتفك فوراً بعد الإرسال.\n\n` +
-    `🛑 <i>بدون المفتاح الصحيح لن يتم قبول الحساب أو دفع $${currentPrice}.</i>`,
-    { parse_mode: "HTML", ...TWO_FA_GMAIL_MENU }
-  );
 }
 
 async function handle2FAVerification(user, chatId, text) {
@@ -1309,7 +1111,7 @@ async function handleTwoFASettings(user, chatId) {
     return;
   }
 
-  const secret = authenticator.generateSecret();
+  const secret   = authenticator.generateSecret();
   user.state     = "awaiting_2fa_verification";
   user.stateMeta = { tempSecret: encrypt(secret) };
   user.markModified("stateMeta");
@@ -1446,11 +1248,7 @@ async function handleReferrals(user, chatId) {
   );
 }
 
-// ═══════════════════════════════════════════════
-// ✅ جديد: قائمة المتصدرين
-// ═══════════════════════════════════════════════
 async function handleLeaderboard(chatId) {
-  // نرتب حسب إجمالي المكسب (totalEarned) للتحفيز — ليس الرصيد الحالي
   const topUsers = await User.find({ totalEarned: { $gt: 0 } })
     .sort({ totalEarned: -1 })
     .limit(LEADERBOARD_SIZE);
@@ -1489,9 +1287,10 @@ async function handleHelp(chatId) {
     `💬 <b>كيفية الحصول على مكافأة $${currentPrice}:</b>\n\n` +
     `1️⃣ اضغط "➕ أنشئ حساب Gmail جديد".\n` +
     `2️⃣ أنشئ الحساب بالبيانات المعطاة.\n` +
-    `3️⃣ اضغط "✅ تم التفعيل والإنشاء" لبدء التحقق.\n` +
-    `4️⃣ فعّل الـ 2FA وأرسل Secret Key.\n` +
-    `5️⃣ انتظر مراجعة الإدارة وضخ الرصيد.\n\n` +
+    `3️⃣ اضغط "✅ تم التفعيل والإنشاء".\n` +
+    `4️⃣ أرسل لقطة شاشة للحساب (أو تخطها).\n` +
+    `5️⃣ فعّل الـ 2FA وأرسل Secret Key.\n` +
+    `6️⃣ انتظر مراجعة الإدارة وضخ الرصيد.\n\n` +
     `📞 للدعم: تواصل مع الإدارة مباشرة.`,
     { parse_mode: "HTML", ...MAIN_MENU }
   );
@@ -1519,7 +1318,6 @@ bot.on("callback_query", async (query) => {
       task.status = "approved";
       await task.save();
 
-      // ✅ تحديث الرصيد + إجمالي المكسب معاً
       await User.findOneAndUpdate(
         { telegramId: task.userId },
         { $inc: { balance: task.amount, totalEarned: task.amount } }
@@ -1572,7 +1370,6 @@ bot.on("callback_query", async (query) => {
       const withdraw = await Withdrawal.findOneAndUpdate({ _id: withId, status: "pending" }, { status: "approved" }, { new: true });
       if (!withdraw) { await bot.answerCallbackQuery(query.id, { text: "⚠️ تمت المعالجة مسبقاً." }); return; }
 
-      // إشعار المستخدم
       bot.sendMessage(withdraw.userId,
         `💸 <b>تمت الموافقة على طلب السحب!</b>\nتم تحويل <b>$${fmt(withdraw.amount)}</b> لمحفظتك.`,
         { parse_mode: "HTML" }
@@ -1582,7 +1379,6 @@ bot.on("callback_query", async (query) => {
         { chat_id: chatId, message_id: msgId, parse_mode: "HTML" }
       ).catch(() => {});
 
-      // ✅ نشر تأكيد السحب على القناة مع اسم المستخدم
       if (CHANNEL_ID) {
         const withdrawUser = await User.findOne({ telegramId: withdraw.userId });
         const userTag  = withdrawUser?.username
@@ -1633,8 +1429,8 @@ bot.on("callback_query", async (query) => {
 mongoose.connect(MONGODB_URI)
   .then(async () => {
     console.log("✅ MongoDB متصل. البوت يعمل الآن.");
-    await loadDynamicPrice();      // تحميل السعر المحفوظ من DB
-    await loadMaintenanceMode();   // تحميل حالة وضع الصيانة من DB
+    await loadDynamicPrice();
+    await loadMaintenanceMode();
   })
   .catch((err) => { console.error("❌ فشل الاتصال بـ MongoDB:", err.message); process.exit(1); });
 
