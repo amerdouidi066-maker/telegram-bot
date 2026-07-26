@@ -52,7 +52,6 @@ const B = {
   CANCEL:                "❌ إلغاء العملية",
   CONFIRMED_CREATE:      "✅ تم التفعيل والإنشاء",
   CANCEL_CREATE:         "❌ إلغاء إنشاء الحساب",
-  SKIP_SCREENSHOT:       "⏭️ متابعة بدون لقطة شاشة",
   BALANCE_LOG:           "📝 سجل الرصيد",
   WITHDRAW:              "💳 سحب",
   TWO_FA_SETTINGS:       "🔐 إعدادات التحقق بخطوتين للبوت",
@@ -111,7 +110,6 @@ const taskSchema = new mongoose.Schema({
   accountEmail:     { type: String, required: true },
   accountId:        { type: mongoose.Schema.Types.ObjectId, ref: "Account" },
   google2FASecret:  { type: String, default: "" },
-  screenshotFileId: { type: String, default: null },
   status:           { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
   submittedAt:      { type: Date, default: Date.now },
 }, { timestamps: true });
@@ -148,13 +146,6 @@ const MAIN_MENU = {
       [B.LEADERBOARD,   B.SETTINGS],
       [B.HELP],
     ],
-    resize_keyboard: true,
-  },
-};
-
-const SCREENSHOT_MENU = {
-  reply_markup: {
-    keyboard: [[B.SKIP_SCREENSHOT], [B.CANCEL_CREATE]],
     resize_keyboard: true,
   },
 };
@@ -456,9 +447,8 @@ bot.onText(/\/admin/, async (msg) => {
 // 💬 معالج الرسائل الرئيسي
 // ═══════════════════════════════════════════════
 bot.on("message", async (msg) => {
-  const hasText  = Boolean(msg.text && !msg.text.startsWith("/"));
-  const hasPhoto = Boolean(msg.photo?.length);
-  if (!hasText && !hasPhoto) return;
+  const hasText = Boolean(msg.text && !msg.text.startsWith("/"));
+  if (!hasText) return;
 
   const chatId = msg.chat.id;
   const userId = msg.from.id;
@@ -490,14 +480,6 @@ bot.on("message", async (msg) => {
       const handled = await handleAdminText(bot, msg, user, chatId, text);
       if (handled) return;
     }
-
-    // ─── حالة لقطة الشاشة — تقبل صوراً ونصوصاً ───
-    if (user.state === "awaiting_gmail_screenshot") {
-      await handleGmailScreenshot(user, msg, chatId, text);
-      return;
-    }
-
-    if (!hasText) return;
 
     if (text === B.BACK) {
       await resetUserState(user, false);
@@ -739,26 +721,17 @@ async function sendPendingTasksToAdmin(chatId) {
     let liveCode = "—", timeLeft = 0;
     try { liveCode = authenticator.generate(plainSecret); timeLeft = authenticator.timeRemaining(); } catch {}
 
-    const ssRow = task.screenshotFileId
-      ? [{ text: "📸 عرض لقطة الشاشة", callback_data: `view_ss_${task._id}` }]
-      : null;
-
-    const inlineRows = [];
-    if (ssRow) inlineRows.push(ssRow);
-    inlineRows.push([
-      { text: "✅ قبول وضخ رصيد",    callback_data: `app_task_${task._id}` },
-      { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` },
-    ]);
-
     await bot.sendMessage(chatId,
       `📬 <b>طلب مراجعة Gmail</b>\n\n` +
       `👤 المستخدم: <code>${task.userId}</code>\n` +
       `📧 البريد: <code>${escapeHtml(task.accountEmail)}</code>\n` +
       `🔑 الباسورد: <code>${escapeHtml(plainPass)}</code>\n\n` +
       `🔐 <b>OTP الحالي:</b> <code>${liveCode}</code> (ينتهي خلال ${timeLeft}s)\n` +
-      `⚙️ Secret Key:\n<code>${plainSecret}</code>` +
-      (task.screenshotFileId ? `\n\n📸 <i>يوجد لقطة شاشة — اضغط الزر أدناه لعرضها.</i>` : ""),
-      { parse_mode: "HTML", reply_markup: { inline_keyboard: inlineRows } }
+      `⚙️ Secret Key:\n<code>${plainSecret}</code>`,
+      { parse_mode: "HTML", reply_markup: { inline_keyboard: [[
+        { text: "✅ قبول وضخ رصيد",    callback_data: `app_task_${task._id}` },
+        { text: "❌ رفض الطلب نهائياً", callback_data: `rej_task_${task._id}` },
+      ]] } }
     ).catch(() => {});
   }
 }
@@ -933,74 +906,15 @@ async function handleConfirmation(user, msg, chatId, text) {
     return;
   }
 
-  // حذف رسالة بيانات الحساب والانتقال مباشرة لخطوة لقطة الشاشة
+  // حذف رسالة بيانات الحساب والانتقال مباشرة لخطوة الـ 2FA
   await bot.deleteMessage(chatId, user.stateMeta?.dataMessageId).catch(() => {});
-
-  user.state = "awaiting_gmail_screenshot";
-  user.markModified("stateMeta");
-  await user.save();
-
-  await bot.sendMessage(chatId,
-    `📸 <b>أرسل لقطة شاشة للحساب الجديد:</b>\n\n` +
-    `افتح Gmail الجديد من المتصفح أو التطبيق، ثم <b>التقط صورة للصفحة الرئيسية</b> تُظهر:\n` +
-    `• عنوان البريد في أعلى الصفحة\n` +
-    `• صندوق الوارد (حتى لو فارغاً)\n\n` +
-    `📌 <i>اللقطة دليل قبول إضافي يُسرّع موافقة الإدارة.</i>\n` +
-    `يمكنك تخطي هذه الخطوة بالضغط على الزر أدناه.`,
-    { parse_mode: "HTML", ...SCREENSHOT_MENU }
-  );
-}
-
-// ─── معالج لقطة شاشة Gmail ───
-async function handleGmailScreenshot(user, msg, chatId, text) {
-  const hasPhoto = Boolean(msg.photo?.length);
-
-  if (text === B.CANCEL_CREATE) {
-    await resetUserState(user, true);
-    await bot.sendMessage(chatId, "👋 تم الإلغاء.", MAIN_MENU);
-    return;
-  }
-
-  if (text === B.SKIP_SCREENSHOT) {
-    user.state = "awaiting_gmail_backup_codes";
-    user.markModified("stateMeta");
-    await user.save();
-    await bot.sendMessage(chatId,
-      `⚠️ <b>تم تخطي لقطة الشاشة.</b>\n\n` +
-      `⚙️ <b>الخطوة التالية — مفتاح الـ 2FA (إلزامي):</b>\n\n` +
-      `1️⃣ توجه لإعدادات الحساب ← الأمان ← التحقق بخطوتين.\n` +
-      `2️⃣ اختر تطبيق Authenticator واضغط <b>"لا يمكن مسحه ضوئياً"</b>.\n` +
-      `3️⃣ انسخ <b>المفتاح السري (Secret Key)</b> وأرسله هنا.\n` +
-      `4️⃣ 🚨 احذف تسجيل الدخول من هاتفك فوراً بعد الإرسال.\n\n` +
-      `🛑 <i>بدون المفتاح الصحيح لن يتم قبول الحساب أو دفع $${currentPrice}.</i>`,
-      { parse_mode: "HTML", ...TWO_FA_GMAIL_MENU }
-    );
-    return;
-  }
-
-  if (!hasPhoto) {
-    await bot.sendMessage(chatId,
-      `📸 يرجى إرسال <b>صورة (لقطة شاشة)</b> لصندوق الوارد Gmail،\n` +
-      `أو اضغط <b>${B.SKIP_SCREENSHOT}</b> للتخطي.`,
-      { parse_mode: "HTML", ...SCREENSHOT_MENU }
-    );
-    return;
-  }
-
-  const fileId    = msg.photo[msg.photo.length - 1].file_id;
-  const accountId = user.stateMeta?.accountId;
-  if (accountId) {
-    user.stateMeta = { ...user.stateMeta, screenshotFileId: fileId };
-    user.markModified("stateMeta");
-  }
 
   user.state = "awaiting_gmail_backup_codes";
   user.markModified("stateMeta");
   await user.save();
 
   await bot.sendMessage(chatId,
-    `✅ <b>تم استلام لقطة الشاشة!</b>\n\n` +
-    `⚙️ <b>الخطوة الأخيرة — مفتاح الـ 2FA (إلزامي):</b>\n\n` +
+    `⚙️ <b>الخطوة التالية — مفتاح الـ 2FA (إلزامي):</b>\n\n` +
     `1️⃣ توجه لإعدادات الحساب ← الأمان ← التحقق بخطوتين.\n` +
     `2️⃣ اختر تطبيق Authenticator واضغط <b>"لا يمكن مسحه ضوئياً"</b>.\n` +
     `3️⃣ انسخ <b>المفتاح السري (Secret Key)</b> وأرسله هنا.\n` +
@@ -1054,7 +968,6 @@ async function handleGmail2FASecret(user, msg, chatId, text) {
     accountId:       account._id,
     google2FASecret: encrypt(cleanSecret),
     submittedAt:     new Date(),
-    ...(user.stateMeta?.screenshotFileId ? { screenshotFileId: user.stateMeta.screenshotFileId } : {}),
   });
 
   await resetUserState(user, false);
@@ -1288,9 +1201,8 @@ async function handleHelp(chatId) {
     `1️⃣ اضغط "➕ أنشئ حساب Gmail جديد".\n` +
     `2️⃣ أنشئ الحساب بالبيانات المعطاة.\n` +
     `3️⃣ اضغط "✅ تم التفعيل والإنشاء".\n` +
-    `4️⃣ أرسل لقطة شاشة للحساب (أو تخطها).\n` +
-    `5️⃣ فعّل الـ 2FA وأرسل Secret Key.\n` +
-    `6️⃣ انتظر مراجعة الإدارة وضخ الرصيد.\n\n` +
+    `4️⃣ فعّل الـ 2FA وأرسل Secret Key.\n` +
+    `5️⃣ انتظر مراجعة الإدارة وضخ الرصيد.\n\n` +
     `📞 للدعم: تواصل مع الإدارة مباشرة.`,
     { parse_mode: "HTML", ...MAIN_MENU }
   );
@@ -1331,21 +1243,6 @@ bot.on("callback_query", async (query) => {
         `✅ <b>تمت الموافقة:</b> <code>${escapeHtml(task.accountEmail)}</code>`,
         { chat_id: chatId, message_id: msgId, parse_mode: "HTML" }
       ).catch(() => {});
-    }
-
-    else if (data.startsWith("view_ss_")) {
-      const taskId = data.slice("view_ss_".length);
-      const task   = await Task.findById(taskId);
-      if (!task?.screenshotFileId) {
-        await bot.answerCallbackQuery(query.id, { text: "⚠️ لا توجد لقطة شاشة لهذا الطلب." });
-        return;
-      }
-      await bot.sendPhoto(chatId, task.screenshotFileId, {
-        caption: `📸 لقطة شاشة Gmail\n📧 <code>${escapeHtml(task.accountEmail)}</code>`,
-        parse_mode: "HTML",
-      }).catch(() => {});
-      await bot.answerCallbackQuery(query.id, { text: "تم إرسال لقطة الشاشة." });
-      return;
     }
 
     else if (data.startsWith("rej_task_")) {
